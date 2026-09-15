@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react"
+import { useWorkspaceTheme } from "@/hooks/use-workspace-theme"
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query"
 import { useCloudAuth } from "@/lib/auth/use-cloud-auth"
 import { CHARACTERS_QUERY_KEY, LOOKS_QUERY_KEY } from "@/lib/api/characters"
@@ -67,6 +68,7 @@ function AppShell() {
   const liveEventsWanted = useLiveEventsWanted()
   useUserEvents({ enabled: Boolean(cloud.signedIn) && liveEventsWanted })
   const meta = WORKSPACES.find((item) => item.id === workspace)
+  useWorkspaceTheme(workspace)
 
   useEffect(() => {
     if (workspace === "comments") setCommentsMounted(true)

@@ -44,6 +44,35 @@ body,
   color-scheme: only light;
 }
 
+/* shell dark theme (film workspace) — tokens align with Melrain canvas #14161c / #ece7dc */
+:root[data-theme="dark"],
+.app-shell[data-theme="dark"] {
+  --bg: #14161c;
+  --bg-raise: #1a1d26;
+  --bg-soft: #1e222c;
+  --ink: #ece7dc;
+  --muted: #a8a29a;
+  --line: #2a2e38;
+  --accent: #bb0028;
+  --accent-soft: color-mix(in srgb, #bb0028 28%, #1a1d26);
+  --ok: #3dba6a;
+  --bad: #f07178;
+  --sidebar: #14161c;
+  --sidebar-ink: #ece7dc;
+  --sidebar-muted: #a8a29a;
+  --sidebar-active: color-mix(in srgb, #bb0028 34%, #1e222c);
+  color-scheme: dark;
+}
+
+html[data-theme="dark"],
+html[data-theme="dark"] body,
+html[data-theme="dark"] #root {
+  color-scheme: dark;
+  color: var(--ink);
+  background: var(--bg);
+}
+
+
 body {
   overflow: hidden;
 }
