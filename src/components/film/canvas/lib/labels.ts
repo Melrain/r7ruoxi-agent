@@ -11,6 +11,7 @@ export const KIND_LABEL: Record<NodeKind, string> = {
   scene: "场景",
   character: "角色",
   agent: "智能体",
+  skill: "Skill",
 };
 
 export const STATUS_LABEL: Record<NodeStatus, string> = {

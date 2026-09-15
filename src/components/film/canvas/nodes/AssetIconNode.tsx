@@ -1,6 +1,7 @@
 "use client";
 
-import { Handle, Position, type NodeProps } from "@xyflow/react";
+import { Position, type NodeProps } from "@xyflow/react";
+import { LitHandle } from "@/components/film/canvas/nodes/LitHandle";
 import { ImageIcon, Loader2, Paperclip, Video } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { assetKindOf } from "@/components/film/canvas/lib/agent-catalog";
@@ -95,7 +96,7 @@ export function AssetIconNode({ id, data, selected }: NodeProps<AppNode>) {
   return (
     <div className="relative w-[108px]">
       <div className={cn("node-icon flex flex-col items-center gap-1.5", selected && "is-selected")}>
-        {/* 初始资产：只留右侧出点，左入点不渲染 */}
+        {/* 初始资产：四边出点 */}
         <div
           className={cn(
             "relative flex size-20 flex-col overflow-hidden rounded-2xl border shadow-[0_10px_24px_rgb(0_0_0_/_45%)]",
@@ -239,13 +240,31 @@ export function AssetIconNode({ id, data, selected }: NodeProps<AppNode>) {
           <p className="w-full truncate text-center text-[11px] text-slate-200">{name}</p>
         ) : null}
 
-        {/* 右出点：点开交给 / 拖过阈值拉线；无旁侧 + */}
-        <Handle
+        {/* L/R 出点；右出点：点开交给 / 拖过阈值拉线。隐藏 in 供产出边挂载 */}
+        <LitHandle
+          id="in"
+          type="target"
+          position={Position.Left}
+          primaryForNull
+          className="node-handle"
+          isConnectable={false}
+          style={{ background: color, opacity: 0, pointerEvents: "none" }}
+        />
+        <LitHandle
+          id="out-l"
+          type="source"
+          position={Position.Left}
+          className="node-handle"
+          style={{ background: color }}
+        />
+        <LitHandle
+          id="out"
           type="source"
           position={Position.Right}
+          primaryForNull
           className="node-handle"
           data-asset-source-handle={id}
-          style={{ background: color, top: 40 }}
+          style={{ background: color }}
           onPointerDown={(e) => {
             ptrRef.current = { x: e.clientX, y: e.clientY };
             draggedRef.current = false;

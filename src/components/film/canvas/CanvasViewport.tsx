@@ -20,6 +20,7 @@ import { edgeTypes } from "@/components/film/canvas/edges/TopologyEdge";
 import { nodeTypes } from "@/components/film/canvas/nodes";
 import { canConnect, connectRejectReason } from "@/components/film/canvas/lib/agent-catalog";
 import { decorateCanvasEdge } from "@/components/film/canvas/lib/edge-style";
+import { resolveConnectionHandles } from "@/components/film/canvas/lib/nearest-handles";
 import { isUploadKind, pickAndAttachAsset } from "@/components/film/canvas/lib/pick-local-file";
 import { useProjectStore } from "@/components/film/canvas/store/project-store";
 
@@ -234,7 +235,16 @@ function FlowCanvas() {
           const toId = state.toNode?.id;
           if (!toId) return;
           const to = useProjectStore.getState().nodes.find((n) => n.id === toId);
-          showToast(connectRejectReason(from, to) ?? "不能这样连");
+          showToast(
+            connectRejectReason(
+              from,
+              to,
+              resolveConnectionHandles(from, to, {
+                sourceHandle: state.fromHandle?.id ?? null,
+                targetHandle: state.toHandle?.id ?? null,
+              })
+            ) ?? "不能这样连"
+          );
         }}
         connectionMode={ConnectionMode.Strict}
         connectionRadius={48}
@@ -305,7 +315,14 @@ function FlowCanvas() {
           const tgt = useProjectStore
             .getState()
             .nodes.find((n) => n.id === connection.target);
-          return canConnect(src, tgt);
+          return canConnect(
+            src,
+            tgt,
+            resolveConnectionHandles(src, tgt, {
+              sourceHandle: connection.sourceHandle,
+              targetHandle: connection.targetHandle,
+            })
+          );
         }}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}

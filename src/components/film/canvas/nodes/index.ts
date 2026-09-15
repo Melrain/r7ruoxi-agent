@@ -1,6 +1,7 @@
 import { createElement } from "react";
 import type { NodeProps, NodeTypes } from "@xyflow/react";
 import { AgentNode } from "@/components/film/canvas/nodes/AgentNode";
+import { SkillNode } from "@/components/film/canvas/nodes/SkillNode";
 import { AssetIconNode } from "@/components/film/canvas/nodes/AssetIconNode";
 import { BreakdownAssetNode } from "@/components/film/canvas/nodes/BreakdownAssetNode";
 import {
@@ -43,4 +44,5 @@ export const nodeTypes = {
   scene: CharacterOrSceneRouter,
   character: CharacterOrSceneRouter,
   agent: AgentNode,
+  skill: SkillNode,
 } satisfies NodeTypes;

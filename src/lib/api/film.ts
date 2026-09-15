@@ -24,7 +24,7 @@ import {
 const LIST_TIMEOUT_MS = 15_000
 const UPLOAD_TIMEOUT_MS = 180_000
 /** 跟拍拆解可能很长；须 ≥ Nest，建议 180–380s。 */
-const ANALYZE_TIMEOUT_MS = 380_000
+const ANALYZE_TIMEOUT_MS = 480_000
 const PREFLIGHT_TIMEOUT_MS = 90_000
 
 export const FILM_QUERY_KEY = ["film"] as const
@@ -269,13 +269,24 @@ export async function addFilmReference(
 export async function analyzeFilmReference(
   projectId: string,
   refId: string,
-  options?: { signal?: AbortSignal; preferredSource?: FilmRunnerSource },
+  options?: {
+    signal?: AbortSignal
+    preferredSource?: FilmRunnerSource
+    skillId?: string
+    promptSupplement?: string
+  },
 ) {
   const preferred = options?.preferredSource
+  const payload: Record<string, string> = {}
+  if (preferred === "local" || preferred === "vps") {
+    payload.preferredSource = preferred
+  }
+  if (options?.skillId?.trim()) payload.skillId = options.skillId.trim()
+  if (typeof options?.promptSupplement === "string") {
+    payload.promptSupplement = options.promptSupplement
+  }
   const body =
-    preferred === "local" || preferred === "vps"
-      ? JSON.stringify({ preferredSource: preferred })
-      : undefined
+    Object.keys(payload).length > 0 ? JSON.stringify(payload) : undefined
   return requireProject(
     await backendFetch<unknown>(
       projectPath(projectId, `/references/${encodeURIComponent(refId)}/analyze`),

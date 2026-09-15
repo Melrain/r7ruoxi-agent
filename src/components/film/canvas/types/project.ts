@@ -22,9 +22,9 @@ export type CatalogAgentId =
 
 export type AgentId = CatalogAgentId | string;
 
-export type NodeKind = AssetKind | "agent";
+export type NodeKind = AssetKind | "agent" | "skill";
 
-export type NodeRole = "asset" | "agent";
+export type NodeRole = "asset" | "agent" | "skill";
 
 export type EdgeKind = "in" | "out";
 
@@ -93,6 +93,20 @@ export interface CanvasNodeData extends Record<string, unknown> {
   groupId?: string;
   /** Catalog prompt override for agent nodes; cleared by 「恢复目录默认」. */
   promptOverride?: AgentPromptOverride;
+  /** 官方 Skill id（节点只存引用，不内嵌 body）。 */
+  skillId?: string;
+  /** 展示用 Skill name（如 video-parse）。 */
+  skillName?: string;
+  /** Skill 短标题（卡/芯片展示）。 */
+  skillTitle?: string;
+  /** Skill version。 */
+  skillVersion?: string;
+  /** Skill 面向的智能体（parse / script / image …）。 */
+  skillAgent?: string;
+  /** 只读预览摘要（装配芯片 / 卡脚注；不内嵌全文）。 */
+  skillBodyPreview?: string;
+  /** 节点短补充；服务端按 Skill.maxChars 截断。 */
+  promptSupplement?: string;
   /** 文字资产卡角色：角色|场景|道具（区别于拆解镜号卡）。 */
   assetRole?: "character" | "scene" | "prop";
   /** 显式标记为文字资产便签卡（character/scene 也可走 TextAssetCardNode）。 */

@@ -95,9 +95,8 @@
   opacity: 1;
   transform-origin: center;
   transition: transform 140ms ease, box-shadow 140ms ease;
-  box-shadow:
-    0 0 0 2px rgb(255 255 255 / 18%),
-    0 0 14px rgb(232 194 122 / 55%);
+  /* Idle: quiet solid — no halo / glow */
+  box-shadow: none;
 }
 
 .react-flow__handle.node-handle::before {
@@ -105,6 +104,8 @@
   position: absolute;
   inset: -14px;
   border-radius: 999px;
+  /* Hit-area halo must not steal clicks from Assign menus beside the handle */
+  pointer-events: none;
 }
 
 .react-flow__handle.node-handle::after {
@@ -115,16 +116,61 @@
   border: 1px solid rgb(255 255 255 / 22%);
   animation: handle-glow 2.4s ease-in-out infinite;
   pointer-events: none;
+  /* Idle: no ring animation */
+  opacity: 0;
+  animation: none;
 }
 
+/* Lit only when connected, hovering, or actively connecting */
+.react-flow__handle.node-handle.is-connected,
 .react-flow__handle.node-handle:hover,
 .react-flow__handle-connecting,
 .react-flow__handle-valid {
-  transform: scale(1.45);
+  box-shadow:
+    0 0 0 2px rgb(255 255 255 / 18%),
+    0 0 14px rgb(232 194 122 / 55%);
+}
+
+.react-flow__handle.node-handle.is-connected::after,
+.react-flow__handle.node-handle:hover::after,
+.react-flow__handle-connecting::after,
+.react-flow__handle-valid::after {
+  opacity: 1;
+  animation: handle-glow 2.4s ease-in-out infinite;
+}
+
+/* Never replace RF position translate with bare scale/none — that shifts the
+   visual circle while edge anchors stay at the pre-override bounds (edge sticks
+   to the top of the circle). Compose with left/right/top/bottom translates. */
+.react-flow__handle-left.node-handle:hover,
+.react-flow__handle-left.react-flow__handle-connecting,
+.react-flow__handle-left.react-flow__handle-valid {
+  transform: translate(-50%, -50%) scale(1.45);
+}
+.react-flow__handle-right.node-handle:hover,
+.react-flow__handle-right.react-flow__handle-connecting,
+.react-flow__handle-right.react-flow__handle-valid {
+  transform: translate(50%, -50%) scale(1.45);
+}
+.react-flow__handle-top.node-handle:hover,
+.react-flow__handle-top.react-flow__handle-connecting,
+.react-flow__handle-top.react-flow__handle-valid {
+  transform: translate(-50%, -50%) scale(1.45);
+}
+.react-flow__handle-bottom.node-handle:hover,
+.react-flow__handle-bottom.react-flow__handle-connecting,
+.react-flow__handle-bottom.react-flow__handle-valid {
+  transform: translate(-50%, 50%) scale(1.45);
+}
+.react-flow__handle.node-handle:hover,
+.react-flow__handle-connecting,
+.react-flow__handle-valid {
   box-shadow:
     0 0 0 4px rgb(255 255 255 / 20%),
     0 0 22px rgb(232 194 122 / 80%);
 }
+
+/* Connected: do not override transform (preserve RF translate centering). */
 
 @keyframes handle-glow {
   0%, 100% { opacity: 0.35; }
@@ -138,8 +184,19 @@
   box-shadow: 0 0 0 3px rgb(56 189 248 / 18%), 0 0 28px rgb(56 189 248 / 22%);
 }
 
+.react-flow__node.is-drop-valid .react-flow__handle-left.node-handle {
+  transform: translate(-50%, -50%) scale(1.45);
+}
+.react-flow__node.is-drop-valid .react-flow__handle-right.node-handle {
+  transform: translate(50%, -50%) scale(1.45);
+}
+.react-flow__node.is-drop-valid .react-flow__handle-top.node-handle {
+  transform: translate(-50%, -50%) scale(1.45);
+}
+.react-flow__node.is-drop-valid .react-flow__handle-bottom.node-handle {
+  transform: translate(-50%, 50%) scale(1.45);
+}
 .react-flow__node.is-drop-valid .node-handle {
-  transform: scale(1.45);
   box-shadow:
     0 0 0 4px rgb(56 189 248 / 28%),
     0 0 22px rgb(56 189 248 / 55%);
@@ -151,7 +208,6 @@
 }
 
 .react-flow__node.is-drop-invalid .node-handle {
-  transform: none;
   box-shadow: none;
 }
 
@@ -255,12 +311,61 @@
   .react-flow__handle.node-handle::after {
     animation: none;
   }
-  .react-flow__handle.node-handle:hover,
-  .react-flow__handle-connecting,
-  .react-flow__handle-valid,
-  .react-flow__node.is-drop-valid .node-handle {
-    transform: none;
+  .react-flow__handle-left.node-handle:hover,
+  .react-flow__handle-left.react-flow__handle-connecting,
+  .react-flow__handle-left.react-flow__handle-valid,
+  .react-flow__node.is-drop-valid .react-flow__handle-left.node-handle {
+    transform: translate(-50%, -50%);
   }
+  .react-flow__handle-right.node-handle:hover,
+  .react-flow__handle-right.react-flow__handle-connecting,
+  .react-flow__handle-right.react-flow__handle-valid,
+  .react-flow__node.is-drop-valid .react-flow__handle-right.node-handle {
+    transform: translate(50%, -50%);
+  }
+  .react-flow__handle-top.node-handle:hover,
+  .react-flow__handle-top.react-flow__handle-connecting,
+  .react-flow__handle-top.react-flow__handle-valid,
+  .react-flow__node.is-drop-valid .react-flow__handle-top.node-handle {
+    transform: translate(-50%, -50%);
+  }
+  .react-flow__handle-bottom.node-handle:hover,
+  .react-flow__handle-bottom.react-flow__handle-connecting,
+  .react-flow__handle-bottom.react-flow__handle-valid,
+  .react-flow__node.is-drop-valid .react-flow__handle-bottom.node-handle {
+    transform: translate(-50%, 50%);
+  }
+}
+
+/* Typed Skill input (id=skill): empty quiet vs equipped / connected blue */
+.react-flow__handle.node-handle-skill.is-empty {
+  border: 2px dashed #60a5fa;
+  background: #0c1018 !important;
+  box-shadow: none;
+}
+.react-flow__handle.node-handle-skill.is-empty::after {
+  border-color: rgb(96 165 250 / 35%);
+  animation: none;
+  opacity: 0;
+}
+.react-flow__handle.node-handle-skill.is-equipped,
+.react-flow__handle.node-handle-skill.is-connected {
+  border: 2px solid #07080c;
+  background: #60a5fa !important;
+  box-shadow:
+    0 0 0 3px rgb(96 165 250 / 35%),
+    0 0 18px rgb(96 165 250 / 55%);
+}
+.react-flow__handle.node-handle-skill.is-equipped::after,
+.react-flow__handle.node-handle-skill.is-connected::after {
+  border-color: rgb(96 165 250 / 45%);
+  opacity: 1;
+  animation: handle-glow 2.4s ease-in-out infinite;
+}
+.react-flow__handle.node-handle-skill:hover {
+  box-shadow:
+    0 0 0 4px rgb(96 165 250 / 28%),
+    0 0 22px rgb(96 165 250 / 70%);
 }
 
 .react-flow__handle.node-handle-out,
@@ -374,4 +479,85 @@
 }
 .node-sticky {
   transform: rotate(-0.6deg);
+}
+
+/* Skill book — vertical cover (~78×104) + thickness; title/hint live below in JSX */
+.skill-book {
+  border: 1px solid rgb(96 165 250 / 22%);
+}
+.skill-book--idle {
+  border-color: rgb(96 165 250 / 28%);
+}
+.skill-book--assembled {
+  border-color: rgb(96 165 250 / 55%);
+}
+.skill-book--selected {
+  border-color: rgb(147 197 253 / 90%);
+  box-shadow:
+    0 0 0 1px rgb(147 197 253 / 70%),
+    0 4px 14px rgb(0 0 0 / 45%) !important;
+}
+.react-flow__handle.node-handle-skill-out {
+  border: 2px solid #07080c;
+  background: #60a5fa !important;
+  box-shadow: none;
+}
+.react-flow__handle.node-handle-skill-out::after {
+  border-color: rgb(96 165 250 / 50%);
+  opacity: 0;
+  animation: none;
+}
+.react-flow__handle.node-handle-skill-out.is-connected,
+.react-flow__handle.node-handle-skill-out:hover {
+  box-shadow:
+    0 0 0 2px rgb(96 165 250 / 35%),
+    0 0 16px rgb(96 165 250 / 70%);
+}
+.react-flow__handle.node-handle-skill-out.is-connected::after,
+.react-flow__handle.node-handle-skill-out:hover::after {
+  opacity: 1;
+  animation: handle-glow 2.4s ease-in-out infinite;
+}
+.react-flow__handle.node-handle-skill-out:hover {
+  box-shadow:
+    0 0 0 4px rgb(96 165 250 / 30%),
+    0 0 22px rgb(96 165 250 / 80%);
+}
+
+/* Skill family (in + out): blue book — larger, blue-400 */
+.react-flow__handle.node-handle-skill,
+.react-flow__handle.node-handle-skill-out {
+  width: 18px;
+  height: 18px;
+  background: #60a5fa !important;
+}
+
+/* Asset in / in-r: cyan family — smaller, clearly not Skill blue */
+.react-flow__handle.node-handle-asset {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #07080c;
+  background: #22d3ee !important;
+  box-shadow: none;
+}
+.react-flow__handle.node-handle-asset::after {
+  border-color: rgb(34 211 238 / 45%);
+  opacity: 0;
+  animation: none;
+}
+.react-flow__handle.node-handle-asset.is-connected,
+.react-flow__handle.node-handle-asset:hover {
+  box-shadow:
+    0 0 0 2px rgb(34 211 238 / 35%),
+    0 0 16px rgb(34 211 238 / 65%);
+}
+.react-flow__handle.node-handle-asset.is-connected::after,
+.react-flow__handle.node-handle-asset:hover::after {
+  opacity: 1;
+  animation: handle-glow 2.4s ease-in-out infinite;
+}
+.react-flow__handle.node-handle-asset:hover {
+  box-shadow:
+    0 0 0 4px rgb(34 211 238 / 28%),
+    0 0 22px rgb(34 211 238 / 75%);
 }

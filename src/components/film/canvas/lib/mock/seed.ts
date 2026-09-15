@@ -12,7 +12,9 @@ import type {
 } from "@/components/film/canvas/types/project";
 
 function roleOf(kind: NodeKind): NodeRole {
-  return kind === "agent" ? "agent" : "asset";
+  if (kind === "agent") return "agent";
+  if (kind === "skill") return "skill";
+  return "asset";
 }
 
 function data(

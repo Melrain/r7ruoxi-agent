@@ -23,12 +23,20 @@ import {
   connectRejectReason,
   getAgentSpec,
   isAgentNode,
+  isSkillNode,
+  resolveEquippedSkill,
+  skillAssembleRejectReason,
   isAssetKind,
   isAssetNode,
   missingInputs,
   missingSlots,
   specOf,
 } from "@/components/film/canvas/lib/agent-catalog";
+import {
+  nearestSideHandles,
+  recomputeEdgeSideHandles,
+  resolveConnectionHandles,
+} from "@/components/film/canvas/lib/nearest-handles";
 import { KIND_LABEL } from "@/components/film/canvas/lib/labels";
 import { findClearPosition, layoutGraph, nextFreePosition, sizeForKind } from "@/components/film/canvas/lib/layout";
 import { mockScriptFromPrompt, runInference, runRowJob } from "@/components/film/canvas/lib/mock/inference";
@@ -87,6 +95,7 @@ export interface ProjectState extends ProjectDoc {
   addMenuOpen: boolean;
   addMenu: AddMenuState | null;
   assetLibraryOpen: boolean;
+  skillLibraryOpen: boolean;
   createAgentDraft: { flowX: number; flowY: number } | null;
   contextMenu: ContextMenuState | null;
   clipboard: ClipboardPayload | null;
@@ -123,6 +132,7 @@ export interface ProjectActions {
   openAddMenu: (menu: AddMenuState) => void;
   closeAddMenu: () => void;
   setAssetLibraryOpen: (open: boolean) => void;
+  setSkillLibraryOpen: (open: boolean) => void;
   openCreateAgent: (at: { flowX: number; flowY: number }) => void;
   closeCreateAgent: () => void;
   addCustomAgent: (
@@ -157,7 +167,10 @@ export interface ProjectActions {
     }
   ) => string;
   assignAgent: (assetId: string, agentId: AgentId) => string | null;
+  assignSkill: (skillNodeId: string, agentId: AgentId) => string | null;
   runAgent: (agentNodeId: string) => Promise<void>;
+  /** Abort in-flight run and clear running UI (parse/agent + emit nodes). */
+  cancelAgentRun: (agentNodeId: string) => void;
   addStarter: (card: StarterCard) => string;
   updateNodeData: (id: string, patch: Partial<CanvasNodeData>) => void;
   updateScriptRow: (
@@ -237,6 +250,7 @@ function uiDefaults(): Pick<
   | "addMenuOpen"
   | "addMenu"
   | "assetLibraryOpen"
+  | "skillLibraryOpen"
   | "createAgentDraft"
   | "contextMenu"
   | "clipboard"
@@ -270,6 +284,7 @@ function uiDefaults(): Pick<
     addMenuOpen: false,
     addMenu: null,
     assetLibraryOpen: false,
+    skillLibraryOpen: false,
     createAgentDraft: null,
     contextMenu: null,
     clipboard: null,
@@ -306,6 +321,31 @@ function patchNode(
 
 let persistTimer: ReturnType<typeof setTimeout> | undefined;
 
+/** In-flight parse/agent AbortControllers — cancel clears FE running + aborts fetch. */
+const agentRunAbortById = new Map<string, AbortController>();
+
+function clearStaleRunningNodes<T extends { data: { status?: string; errorMessage?: string } }>(
+  nodes: T[],
+): T[] {
+  return nodes.map((n) =>
+    n.data.status === "running" || n.data.status === "uploading"
+      ? {
+          ...n,
+          data: {
+            ...n.data,
+            status: "idle" as const,
+            progress: undefined,
+            errorMessage:
+              n.data.status === "running"
+                ? "上次生成中断（刷新或超时后状态卡住），请重试"
+                : n.data.errorMessage,
+          },
+        }
+      : n,
+  );
+}
+
+
 function sleepMs(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
@@ -313,12 +353,15 @@ function sleepMs(ms: number) {
 function connect(
   source: string,
   target: string,
-  edgeKind: "in" | "out" = "in"
+  edgeKind: "in" | "out" = "in",
+  handles?: { sourceHandle?: string | null; targetHandle?: string | null }
 ): AppEdge {
   return {
     id: `e_${source}_${target}_${uid("e")}`,
     source,
     target,
+    sourceHandle: handles?.sourceHandle ?? undefined,
+    targetHandle: handles?.targetHandle ?? undefined,
     type: "default",
     data: { edgeKind },
   };
@@ -334,7 +377,9 @@ function normalizeGraph(nodes: AppNode[], edges: AppEdge[]): {
     const role =
       node.data.kind === "agent" || node.data.role === "agent"
         ? ("agent" as const)
-        : ("asset" as const);
+        : node.data.kind === "skill" || node.data.role === "skill"
+          ? ("skill" as const)
+          : ("asset" as const);
     const catalog =
       role === "agent" ? getAgentSpec(node.data.agentId) : undefined;
     return [{
@@ -394,18 +439,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
     hydrateFromStorage: () => {
       const lib = ensureProjectLibrary(createEmptyDoc());
       const graph = normalizeGraph(lib.doc.nodes, lib.doc.edges);
-      const nodes = graph.nodes.map((n) =>
-        n.data.status === "uploading"
-          ? {
-              ...n,
-              data: {
-                ...n.data,
-                status: "idle" as const,
-                progress: undefined,
-              },
-            }
-          : n,
-      );
+      const nodes = clearStaleRunningNodes(graph.nodes);
       set({
         projectId: lib.currentId,
         projectList: lib.projects,
@@ -493,18 +527,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
         return;
       }
       const graph = normalizeGraph(doc.nodes, doc.edges);
-      const nodes = graph.nodes.map((n) =>
-        n.data.status === "uploading"
-          ? {
-              ...n,
-              data: {
-                ...n.data,
-                status: "idle" as const,
-                progress: undefined,
-              },
-            }
-          : n,
-      );
+      const nodes = clearStaleRunningNodes(graph.nodes);
       // touch current + recent ordering
       saveProjectDoc(id, doc, doc.workspaceTitle);
       set({
@@ -609,9 +632,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
     setZoom: (zoom) => set({ zoom }),
     setAddMenuOpen: (addMenuOpen) => set({ addMenuOpen, addMenu: addMenuOpen ? get().addMenu : null }),
     openAddMenu: (addMenu) =>
-      set({ addMenu, addMenuOpen: true, contextMenu: null, assetLibraryOpen: false }),
+      set({ addMenu, addMenuOpen: true, contextMenu: null, assetLibraryOpen: false, skillLibraryOpen: false }),
     closeAddMenu: () => set({ addMenu: null, addMenuOpen: false }),
-    setAssetLibraryOpen: (assetLibraryOpen) => set({ assetLibraryOpen }),
+    setAssetLibraryOpen: (assetLibraryOpen) => set({ assetLibraryOpen, skillLibraryOpen: assetLibraryOpen ? false : get().skillLibraryOpen }),
+    setSkillLibraryOpen: (skillLibraryOpen) => set({ skillLibraryOpen, assetLibraryOpen: skillLibraryOpen ? false : get().assetLibraryOpen }),
     openCreateAgent: (at) =>
       set({
         createAgentDraft: at,
@@ -685,8 +709,17 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
       const dragEnded = changes.some(
         (change) => change.type === "position" && change.dragging === false
       );
+      const positionChanging = changes.some((change) => change.type === "position");
       if (removingExisting || dragEnded) pushHistory();
-      set({ nodes: applyNodeChanges(changes, current) });
+      const nextNodes = applyNodeChanges(changes, current);
+      if (positionChanging) {
+        set({
+          nodes: nextNodes,
+          edges: recomputeEdgeSideHandles(nextNodes, get().edges),
+        });
+      } else {
+        set({ nodes: nextNodes });
+      }
     },
     onEdgesChange: (changes) => {
       const current = get().edges;
@@ -701,7 +734,19 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
       if (!connection.source || !connection.target) return;
       const source = get().nodes.find((n) => n.id === connection.source);
       const target = get().nodes.find((n) => n.id === connection.target);
-      const reason = connectRejectReason(source, target);
+
+      // Nearest L/R ports from node positions (Skill/Asset → Agent).
+      const resolved = resolveConnectionHandles(source, target, {
+        sourceHandle: connection.sourceHandle ?? null,
+        targetHandle: connection.targetHandle ?? null,
+      });
+      const sourceHandle = resolved.sourceHandle ?? null;
+      const targetHandle = resolved.targetHandle ?? null;
+
+      const reason = connectRejectReason(source, target, {
+        sourceHandle,
+        targetHandle,
+      });
       if (reason) {
         get().showToast(reason);
         return;
@@ -715,15 +760,51 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
         get().showToast("已经连过了");
         return;
       }
+
+      let nextEdges = get().edges;
+      // 单 Skill 刀：智能体已装配时再连另一张 → 静默替换 + toast（对标 canvas-workspace）
+      if (source && target && isSkillNode(source) && isAgentNode(target)) {
+        const existingSkillEdges = nextEdges.filter((edge) => {
+          if (edge.target !== target.id || edge.data?.edgeKind === "out") return false;
+          const src = get().nodes.find((n) => n.id === edge.source);
+          return isSkillNode(src);
+        });
+        if (existingSkillEdges.length > 0) {
+          const oldSrc = get().nodes.find(
+            (n) => n.id === existingSkillEdges[0].source,
+          );
+          const oldName = (
+            oldSrc?.data.skillTitle ||
+            oldSrc?.data.label ||
+            "旧 Skill"
+          ).trim();
+          const newName = (
+            source.data.skillTitle ||
+            source.data.label ||
+            "新 Skill"
+          ).trim();
+          const drop = new Set(existingSkillEdges.map((e) => e.id));
+          nextEdges = nextEdges.filter((e) => !drop.has(e.id));
+          get().showToast(`已替换装配：${oldName} → ${newName}`);
+        }
+      }
+
       pushHistory();
+      const nextConnection: Connection = {
+        ...connection,
+        source: connection.source,
+        target: connection.target,
+        sourceHandle,
+        targetHandle,
+      };
       set({
         edges: addEdge(
           {
-            ...connection,
+            ...nextConnection,
             type: "default",
-            data: { edgeKind: "in" },
+            data: { edgeKind: "in" as const },
           },
-          get().edges
+          nextEdges
         ),
       });
     },
@@ -749,7 +830,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
         position,
         selected: select,
         data: emptyNodeData(kind, {
-          role: kind === "agent" ? "agent" : "asset",
+          role:
+            kind === "agent" ? "agent" : kind === "skill" ? "skill" : "asset",
           label: options?.data?.label ?? KIND_LABEL[kind],
           model: defaultModelId(kind),
           ...options?.data,
@@ -809,11 +891,168 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
         history: false,
       });
       set({
-        edges: addEdge(connect(assetId, agentNodeId, "in"), get().edges),
+        edges: addEdge(
+          connect(
+            assetId,
+            agentNodeId,
+            "in",
+            nearestSideHandles(asset, get().nodes.find((n) => n.id === agentNodeId)!, "asset")
+          ),
+          get().edges
+        ),
         fitViewToken: get().fitViewToken + 1,
         contextMenu: null,
       });
       return agentNodeId;
+    },
+
+    assignSkill: (skillNodeId, agentId) => {
+      const skill = get().nodes.find((n) => n.id === skillNodeId);
+      const spec = getAgentSpec(agentId);
+      if (!skill || !isSkillNode(skill) || !spec) {
+        get().showToast("找不到 Skill 或智能体");
+        return null;
+      }
+      const ghostAgent = {
+        id: "__skill_assign_ghost__",
+        type: "agent" as const,
+        position: { x: 0, y: 0 },
+        data: {
+          role: "agent" as const,
+          kind: "agent" as const,
+          agentId,
+          label: spec.label,
+          accepts: spec.accepts,
+          emits: spec.emits,
+          status: "idle" as const,
+          prompt: "",
+          model: "",
+          aspect: "16:9",
+          duration: "",
+          text: "",
+        },
+      };
+      const reject = skillAssembleRejectReason(skill, ghostAgent as AppNode);
+      if (reject) {
+        get().showToast(reject);
+        return null;
+      }
+
+      // Prefer an existing assemblable agent on canvas (avoid "wrong target" new spawn)
+      const existingAgent = get().nodes.find(
+        (n) =>
+          isAgentNode(n) &&
+          n.data.agentId === agentId &&
+          skillAssembleRejectReason(skill, n) === null,
+      );
+
+      if (existingAgent) {
+        const already = get().edges.some(
+          (edge) =>
+            edge.source === skillNodeId &&
+            edge.target === existingAgent.id &&
+            edge.data?.edgeKind !== "out",
+        );
+        if (already) {
+          get().showToast("已经装配过了");
+          return existingAgent.id;
+        }
+      }
+
+      pushHistory();
+      let agentNodeId: string;
+      let nextEdges = get().edges;
+      let replacedToast: string | null = null;
+
+      if (existingAgent) {
+        agentNodeId = existingAgent.id;
+        const existingSkillEdges = nextEdges.filter((edge) => {
+          if (edge.target !== agentNodeId || edge.data?.edgeKind === "out") {
+            return false;
+          }
+          const src = get().nodes.find((n) => n.id === edge.source);
+          return isSkillNode(src);
+        });
+        if (existingSkillEdges.length > 0) {
+          const oldSrc = get().nodes.find(
+            (n) => n.id === existingSkillEdges[0].source,
+          );
+          const oldName = (
+            oldSrc?.data.skillTitle ||
+            oldSrc?.data.label ||
+            "旧 Skill"
+          ).trim();
+          const newName = (
+            skill.data.skillTitle ||
+            skill.data.label ||
+            "新 Skill"
+          ).trim();
+          const drop = new Set(existingSkillEdges.map((e) => e.id));
+          nextEdges = nextEdges.filter((e) => !drop.has(e.id));
+          replacedToast = `已替换装配：${oldName} → ${newName}`;
+        }
+      } else {
+        agentNodeId = get().addAgent(agentId, {
+          position: { x: skill.position.x + 280, y: skill.position.y },
+          select: true,
+          history: false,
+        });
+        nextEdges = get().edges;
+      }
+
+      // Drop prior edges from this skill to other agents (single assembly)
+      nextEdges = nextEdges.filter((edge) => {
+        if (edge.source !== skillNodeId || edge.data?.edgeKind === "out") {
+          return true;
+        }
+        const tgt = get().nodes.find((n) => n.id === edge.target);
+        return !(tgt && isAgentNode(tgt) && edge.target !== agentNodeId);
+      });
+
+      const agentNode = get().nodes.find((n) => n.id === agentNodeId)!;
+      const skillNode = get().nodes.find((n) => n.id === skillNodeId) ?? skill;
+      set({
+        edges: addEdge(
+          connect(
+            skillNodeId,
+            agentNodeId,
+            "in",
+            nearestSideHandles(skillNode, agentNode, "skill")
+          ),
+          nextEdges
+        ),
+        fitViewToken: get().fitViewToken + 1,
+        contextMenu: null,
+        selectedNodeIds: [agentNodeId],
+      });
+      get().showToast(replacedToast ?? `已装配到${spec.label}`);
+      return agentNodeId;
+    },
+
+    cancelAgentRun: (agentNodeId) => {
+      const ac = agentRunAbortById.get(agentNodeId);
+      if (ac) {
+        ac.abort();
+        agentRunAbortById.delete(agentNodeId);
+      }
+      const agent = get().nodes.find((n) => n.id === agentNodeId);
+      if (!agent || !isAgentNode(agent)) return;
+      get().updateNodeData(agentNodeId, {
+        status: "idle",
+        errorMessage: undefined,
+      });
+      for (const edge of get().edges) {
+        if (edge.source !== agentNodeId || edge.data?.edgeKind !== "out") continue;
+        const out = get().nodes.find((n) => n.id === edge.target);
+        if (!out) continue;
+        if (out.data.status === "running") {
+          get().updateNodeData(out.id, {
+            status: "idle",
+            errorMessage: undefined,
+          });
+        }
+      }
+      get().showToast("已取消生成", { durationMs: 2400 });
     },
 
     runAgent: async (agentNodeId) => {
@@ -976,10 +1215,27 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
         };
 
         const outId = ensureParseOut();
+        const runAc = new AbortController();
+        agentRunAbortById.get(agentNodeId)?.abort();
+        agentRunAbortById.set(agentNodeId, runAc);
         try {
+          const equipped = resolveEquippedSkill(
+            agentNodeId,
+            get().nodes,
+            get().edges,
+          );
+          const resolvedSkillId =
+            equipped?.skillId?.trim() ||
+            agent.data.skillId?.trim() ||
+            undefined;
           const analyzed = await analyzeCanvasVideoReference(
             videoAssetId,
-            { filmProjectId: videoFilmProjectId },
+            {
+              filmProjectId: videoFilmProjectId,
+              skillId: resolvedSkillId,
+              promptSupplement: agent.data.promptSupplement,
+              signal: runAc.signal,
+            },
           );
           const { text, scriptRows } = analyzed;
           get().updateNodeData(outId, {
@@ -1192,14 +1448,30 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
             // 停在剧本步，不继续挂资产
           }
         } catch (caught) {
-          const msg = mapCanvasAnalyzeError(caught);
-          get().updateNodeData(outId, {
-            label: "拆解",
-            status: "error",
-            errorMessage: msg,
-            // Keep prior rows if any; do not invent fake shots.
-          });
-          failParse(msg);
+          if (runAc.signal.aborted) {
+            get().updateNodeData(outId, {
+              label: "拆解",
+              status: "idle",
+              errorMessage: undefined,
+            });
+            get().updateNodeData(agentNodeId, {
+              status: "idle",
+              errorMessage: undefined,
+            });
+          } else {
+            const msg = mapCanvasAnalyzeError(caught);
+            get().updateNodeData(outId, {
+              label: "拆解",
+              status: "error",
+              errorMessage: msg,
+              // Keep prior rows if any; do not invent fake shots.
+            });
+            failParse(msg);
+          }
+        } finally {
+          if (agentRunAbortById.get(agentNodeId) === runAc) {
+            agentRunAbortById.delete(agentNodeId);
+          }
         }
         return;
       }

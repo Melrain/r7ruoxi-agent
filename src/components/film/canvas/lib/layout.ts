@@ -80,6 +80,7 @@ const STEP = 48;
 function sizeForNode(node: AppNode) {
   const kind = node.data.kind ?? node.type;
   if (node.data.role === "agent" || kind === "agent") return { w: 280, h: 150 };
+  if (kind === "skill" || node.data.role === "skill") return { w: 88, h: 148 };
   if (kind === "script") return { w: 340, h: 380 };
   if (kind === "storyboard") return { w: 400, h: 300 };
   if (kind === "text" && isBreakdownAssetData(node.data)) {
@@ -116,6 +117,7 @@ function overlaps(
 }
 
 export function sizeForKind(kind: AppNode["type"] | undefined) {
+  if (kind === "skill") return { w: 88, h: 148 };
   if (kind === "agent") return { w: 280, h: 150 };
   if (kind === "script") return { w: 340, h: 380 };
   if (kind === "storyboard") return { w: 400, h: 300 };

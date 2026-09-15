@@ -105,12 +105,17 @@ function KindIcon({ kind }: { kind: AssetKind }) {
   return <FileText className="size-4 text-zinc-500" />
 }
 
+/** Once per assetId: avoid infinite resign when re-signed URL still 404s. */
+const sheetResignAttempted = new Set<string>()
+
 function Thumb({
   item,
   onUrlResigned,
+  onResignFailed,
 }: {
   item: LibraryAsset
   onUrlResigned: (assetId: string, url: string) => void
+  onResignFailed: (label: string) => void
 }) {
   const [src, setSrc] = useState(() => libraryUrl(item.url ?? ""))
   const [broken, setBroken] = useState(false)
@@ -118,22 +123,41 @@ function Thumb({
 
   useEffect(() => {
     setSrc(libraryUrl(item.url ?? ""))
+    // Only reset broken UI when the list row identity/url externally changes;
+    // do not clear sheetResignAttempted — that is what stops the 404 loop.
     setBroken(false)
     resigning.current = false
   }, [item.url, item.id])
 
-  const onMediaError = useCallback(() => {
-    if (resigning.current || broken) {
+  const markBroken = useCallback(
+    (toast: boolean) => {
       setBroken(true)
+      resigning.current = false
+      if (toast) {
+        onResignFailed(assetLabel(item))
+      }
+    },
+    [item, onResignFailed],
+  )
+
+  const onMediaError = useCallback(() => {
+    if (broken || resigning.current) {
+      markBroken(false)
       return
     }
     const id = item.id?.trim()
     if (!id) {
-      setBroken(true)
+      markBroken(true)
       return
     }
+    // Already attempted resolve for this id → stop (no infinite loop)
+    if (sheetResignAttempted.has(id)) {
+      markBroken(true)
+      return
+    }
+    sheetResignAttempted.add(id)
     resigning.current = true
-    // 与 /assets Thumb 一致：单条 resolve，不整表 refetch
+    // 与 /assets Thumb 一致：单条 resolve，不整表 refetch；每 id 最多一次
     void resolveLibraryAssets([id])
       .then((result) => {
         const next = result.items
@@ -143,14 +167,15 @@ function Thumb({
           setSrc(libraryUrl(next))
           onUrlResigned(id, next)
           resigning.current = false
+          // Keep id in sheetResignAttempted: if next URL still 404s, onError → markBroken
           return
         }
-        setBroken(true)
+        markBroken(true)
       })
       .catch(() => {
-        setBroken(true)
+        markBroken(true)
       })
-  }, [broken, item.id, onUrlResigned])
+  }, [broken, item.id, markBroken, onUrlResigned])
 
   if ((item.kind === "image" || item.kind === "video") && src && !broken) {
     if (item.kind === "image") {
@@ -301,9 +326,9 @@ export function AssetLibrarySheet({
           <div className="flex items-center gap-1">
             <span
               className="rounded-full px-2 py-0.5 text-[11px] text-zinc-600"
-              title="桌面暂无独立资产库管理页；选用走 Nest /internal/assets"
+              title="桌面端暂无独立资产库管理页"
             >
-              Nest 资产库
+              资产库选用
             </span>
             <button
               type="button"
@@ -389,7 +414,13 @@ export function AssetLibrarySheet({
                     className="flex w-full items-center gap-2.5 rounded-xl border border-transparent px-2 py-1.5 text-left hover:border-white/8 hover:bg-white/5"
                   >
                     <span className="inline-flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-black/40">
-                      <Thumb item={item} onUrlResigned={patchItemUrl} />
+                      <Thumb
+                        item={item}
+                        onUrlResigned={patchItemUrl}
+                        onResignFailed={(label) =>
+                          showToast(`预览失效：${label}`)
+                        }
+                      />
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[12px] text-zinc-200">

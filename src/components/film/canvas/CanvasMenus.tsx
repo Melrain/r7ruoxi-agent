@@ -67,6 +67,7 @@ export function CanvasMenus() {
   const selectedNodeIds = useProjectStore((s) => s.selectedNodeIds);
   const closeAddMenu = useProjectStore((s) => s.closeAddMenu);
   const setAssetLibraryOpen = useProjectStore((s) => s.setAssetLibraryOpen);
+  const setSkillLibraryOpen = useProjectStore((s) => s.setSkillLibraryOpen);
   const closeContextMenu = useProjectStore((s) => s.closeContextMenu);
   const addNode = useProjectStore((s) => s.addNode);
   const addAgent = useProjectStore((s) => s.addAgent);
@@ -139,6 +140,14 @@ export function CanvasMenus() {
               onOpenLibrary={() => {
                 closeAddMenu();
                 setAssetLibraryOpen(true);
+              }}
+              onOpenSkillLibrary={() => {
+                closeAddMenu();
+                setSkillLibraryOpen(true);
+              }}
+              skillPlacePosition={{ x: addMenu.flowX, y: addMenu.flowY }}
+              onSkillPlaced={() => {
+                closeAddMenu();
               }}
             />
           </div>

@@ -118,11 +118,16 @@ async function requireAnalyzeReady(signal?: AbortSignal) {
 
 /**
  * True Nest analyze for a canvas video node whose assetId is the film.reference id.
- * Does NOT send canvas promptOverride / breakdownPrompt — Nest uses server default.
+ * Optional skillId / promptSupplement：Nest 按 Skill body > supplement > catalog 注入。
  */
 export async function analyzeCanvasVideoReference(
   assetId: string,
-  options?: { signal?: AbortSignal; filmProjectId?: string },
+  options?: {
+    signal?: AbortSignal
+    filmProjectId?: string
+    skillId?: string
+    promptSupplement?: string
+  },
 ): Promise<CanvasAnalyzeResult> {
   const refId = assetId.trim();
   if (!refId) {
@@ -144,6 +149,8 @@ export async function analyzeCanvasVideoReference(
       thread = await analyzeFilmReference(projectId, refId, {
         preferredSource,
         signal: options?.signal,
+        skillId: options?.skillId,
+        promptSupplement: options?.promptSupplement,
       });
     } catch (caught) {
       throw new Error(mapCanvasAnalyzeError(caught));

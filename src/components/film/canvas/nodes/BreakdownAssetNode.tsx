@@ -1,6 +1,7 @@
 "use client";
 
-import { Handle, Position, type NodeProps } from "@xyflow/react";
+import { Position, type NodeProps } from "@xyflow/react";
+import { LitHandle } from "@/components/film/canvas/nodes/LitHandle";
 import { ArrowRight } from "lucide-react";
 import { useState } from "react";
 import {
@@ -39,11 +40,20 @@ export function BreakdownAssetNode({ id, data, selected }: NodeProps<AppNode>) {
           running && "is-running",
         )}
       >
-        <Handle
+        <LitHandle
+          id="in"
           type="target"
           position={Position.Left}
+          primaryForNull
           className="node-handle"
           isConnectable={false}
+          style={{ background: PORT_COLOR.text, opacity: 0, pointerEvents: "none" }}
+        />
+        <LitHandle
+          id="out-l"
+          type="source"
+          position={Position.Left}
+          className="node-handle"
           style={{ background: PORT_COLOR.text }}
         />
         <div className="p-4">
@@ -139,9 +149,11 @@ export function BreakdownAssetNode({ id, data, selected }: NodeProps<AppNode>) {
             </div>
           ) : null}
         </div>
-        <Handle
+        <LitHandle
+          id="out"
           type="source"
           position={Position.Right}
+          primaryForNull
           className="node-handle"
           style={{ background: PORT_COLOR.text }}
         />

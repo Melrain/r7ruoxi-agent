@@ -5,21 +5,28 @@ import {
   BookOpen,
   FileText,
   ImageIcon,
+  Loader2,
   MapPinned,
   Paperclip,
   Play,
   Sparkles,
   Table2,
+  Wand2,
   UserRound,
   Video,
   Volume2,
+  Square,
 } from "lucide-react";
-import type { ComponentType } from "react";
+import { useEffect, useState, type ComponentType } from "react";
+import { getAgentSkill } from "@/lib/api/skills";
 import { NodeChrome } from "@/components/film/canvas/nodes/NodeChrome";
 import {
   assetKindOf,
   hasCustomPrompt,
   missingInputs,
+  resolveEquippedSkill,
+  shortSkillTitle,
+  SKILL_ASSEMBLABLE_AGENTS,
   specOf,
 } from "@/components/film/canvas/lib/agent-catalog";
 import { KIND_LABEL } from "@/components/film/canvas/lib/labels";
@@ -112,6 +119,12 @@ export function AgentNode({ id, data, selected }: NodeProps<AppNode>) {
   const nodes = useProjectStore((s) => s.nodes);
   const edges = useProjectStore((s) => s.edges);
   const runAgent = useProjectStore((s) => s.runAgent);
+  const cancelAgentRun = useProjectStore((s) => s.cancelAgentRun);
+  const [skillSummaryOpen, setSkillSummaryOpen] = useState(false);
+  const [skillBody, setSkillBody] = useState<string | null>(null);
+  const [skillBodyLoading, setSkillBodyLoading] = useState(false);
+  const [skillBodyError, setSkillBodyError] = useState<string | null>(null);
+  const [skillBodyRetryKey, setSkillBodyRetryKey] = useState(0);
 
   const inboundKinds: AssetKind[] = [];
   for (const edge of edges) {
@@ -120,6 +133,47 @@ export function AgentNode({ id, data, selected }: NodeProps<AppNode>) {
     const kind = assetKindOf(src);
     if (kind) inboundKinds.push(kind);
   }
+
+  const equipped = resolveEquippedSkill(id, nodes, edges);
+
+  useEffect(() => {
+    if (!skillSummaryOpen || !equipped?.skillId) {
+      setSkillBody(null);
+      setSkillBodyError(null);
+      setSkillBodyLoading(false);
+      return;
+    }
+    const skillId = equipped.skillId;
+    const ac = new AbortController();
+    setSkillBody(null);
+    setSkillBodyError(null);
+    setSkillBodyLoading(true);
+    void getAgentSkill(skillId, { signal: ac.signal })
+      .then((row) => {
+        if (ac.signal.aborted) return;
+        setSkillBody(row.body ?? "");
+        setSkillBodyError(null);
+      })
+      .catch((err: unknown) => {
+        if (ac.signal.aborted) return;
+        if (
+          (typeof DOMException !== "undefined" &&
+            err instanceof DOMException &&
+            err.name === "AbortError") ||
+          (err instanceof Error && err.name === "AbortError")
+        ) {
+          return;
+        }
+        setSkillBody(null);
+        setSkillBodyError(
+          err instanceof Error ? err.message : "加载 Skill 正文失败",
+        );
+      })
+      .finally(() => {
+        if (!ac.signal.aborted) setSkillBodyLoading(false);
+      });
+    return () => ac.abort();
+  }, [skillSummaryOpen, equipped?.skillId, skillBodyRetryKey]);
 
   const connected = new Set(inboundKinds);
   const missing = spec ? missingInputs(spec, inboundKinds) : [];
@@ -133,9 +187,22 @@ export function AgentNode({ id, data, selected }: NodeProps<AppNode>) {
     ? "已自定义"
     : (spec?.prompts?.preview ?? "").trim() || null;
   const width = Math.max(268, 120 + accepts.length * 36);
+  const acceptsSkill = Boolean(
+    spec?.id && SKILL_ASSEMBLABLE_AGENTS.has(spec.id)
+  );
 
   return (
-    <NodeChrome id={id} data={data} selected={selected} width={width}>
+    <NodeChrome
+      id={id}
+      data={data}
+      selected={selected}
+      width={width}
+      skillPort={
+        acceptsSkill
+          ? { show: true, equipped: Boolean(equipped) }
+          : undefined
+      }
+    >
       <div>
         <header className="border-b border-white/[0.06] px-4 py-3">
           <div className="flex items-center justify-between gap-3">
@@ -152,6 +219,66 @@ export function AgentNode({ id, data, selected }: NodeProps<AppNode>) {
             </div>
             <AgentStatus status={data.status} />
           </div>
+          {equipped ? (
+            <div className="relative mt-2">
+              <button
+                type="button"
+                data-testid="agent-skill-chip"
+                className="nodrag nowheel nopan inline-flex max-w-full items-center gap-1 rounded-full border border-[#a78bfa]/40 bg-[#a78bfa]/10 px-2 py-0.5 text-[11px] text-[#c4b5fd] hover:bg-[#a78bfa]/20"
+                title="查看已装配 Skill"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSkillSummaryOpen((v) => !v);
+                }}
+              >
+                <Wand2 className="size-3 shrink-0" />
+                <span className="truncate">
+                  Skill · {shortSkillTitle(equipped.title)}
+                </span>
+              </button>
+              {skillSummaryOpen ? (
+                <div
+                  className="nodrag nowheel nopan absolute left-0 top-full z-30 mt-1 w-[220px] rounded-xl border border-white/10 bg-[#0b0d13] p-2.5 shadow-2xl"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <p className="text-[11px] font-medium text-zinc-200">
+                    {equipped.title}
+                  </p>
+                  <p className="mt-0.5 font-mono text-[10px] text-zinc-500">
+                    {equipped.name || "—"}
+                    {equipped.version ? ` @ v${equipped.version}` : ""}
+                  </p>
+                  <div className="mt-2 max-h-28 overflow-y-auto text-[10px] leading-relaxed text-zinc-400">
+                    {skillBodyLoading && skillBody == null ? (
+                      <div className="flex items-center gap-1.5 py-1">
+                        <Loader2 className="size-3 animate-spin" />
+                        加载正文…
+                      </div>
+                    ) : skillBodyError ? (
+                      <div className="flex flex-col gap-1.5 py-1">
+                        <p className="text-red-300/90">{skillBodyError}</p>
+                        <button
+                          type="button"
+                          data-testid="agent-skill-body-retry"
+                          className="self-start rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-zinc-300 hover:bg-white/10"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSkillBodyRetryKey((k) => k + 1);
+                          }}
+                        >
+                          重试
+                        </button>
+                      </div>
+                    ) : skillBody?.trim() ? (
+                      <p className="whitespace-pre-wrap">{skillBody}</p>
+                    ) : (
+                      <p>（正文为空）</p>
+                    )}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </header>
 
         <div className="flex items-center justify-center gap-1.5 px-3 py-3.5">
@@ -163,16 +290,24 @@ export function AgentNode({ id, data, selected }: NodeProps<AppNode>) {
           <span className="h-px w-2.5 bg-gradient-to-r from-cyan-400/50 to-amber-300/40" />
           <button
             type="button"
-            disabled={!ready || running}
+            disabled={!running && !ready}
             onClick={(e) => {
               e.stopPropagation();
+              if (running) {
+                cancelAgentRun(id);
+                return;
+              }
               void runAgent(id);
             }}
             className="nodrag nowheel nopan relative z-10 flex size-10 shrink-0 items-center justify-center rounded-full border border-[#fbbf24]/70 bg-[#0b0d14] text-[#fbbf24] hover:scale-105 active:scale-95 disabled:border-white/10 disabled:text-slate-600 disabled:hover:scale-100"
-            aria-label={running ? "生成中" : "跑一次"}
-            title={running ? "生成中" : ready ? "跑一次" : "先连上输入"}
+            aria-label={running ? "取消生成" : "跑一次"}
+            title={running ? "取消生成" : ready ? "跑一次" : "先连上输入"}
           >
-            <Play className="size-3.5 fill-current" />
+            {running ? (
+              <Square className="size-3 fill-current" />
+            ) : (
+              <Play className="size-3.5 fill-current" />
+            )}
           </button>
           <span className="h-px w-2.5 bg-gradient-to-r from-amber-300/40 to-amber-400/50" />
           <div className="flex items-center rounded-2xl border border-amber-400/20 bg-amber-500/[0.05] px-1.5 py-1">

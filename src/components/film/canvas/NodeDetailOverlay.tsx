@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { getAgentSkill } from "@/lib/api/skills";
 import { ImageIcon, Loader2, RefreshCw, Share2, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -10,7 +11,7 @@ import { resolveMediaSrc } from "@/components/film/canvas/lib/resolve-asset-url"
 import { KIND_LABEL, STATUS_LABEL } from "@/components/film/canvas/lib/labels";
 import { pickAndAttachAsset } from "@/components/film/canvas/lib/pick-local-file";
 import { AgentPromptPanel } from "@/components/film/canvas/AgentPromptPanel";
-import { isAgentNode } from "@/components/film/canvas/lib/agent-catalog";
+import { isAgentNode, isSkillNode, SKILL_AGENT_LABEL } from "@/components/film/canvas/lib/agent-catalog";
 import {
   breakdownTextSummaryLine,
   isBreakdownAssetData,
@@ -58,6 +59,21 @@ export function NodeDetailOverlay() {
         className="absolute inset-0 z-[60] flex bg-[#14161c]"
       >
         <AgentPromptPanel node={node} />
+      </div>
+    );
+  }
+
+  if (isSkillNode(node)) {
+    return (
+      <div
+        data-testid="node-detail"
+        className="absolute inset-0 z-[60] flex flex-col bg-[#14161c]"
+      >
+        <SkillDetailBody
+          node={node}
+          onClose={() => closeNodeDetail()}
+          showToast={showToast}
+        />
       </div>
     );
   }
@@ -559,3 +575,121 @@ export function NodeDetailOverlay() {
     </div>
   );
 }
+
+function SkillDetailBody({
+  node,
+  onClose,
+  showToast,
+}: {
+  node: NonNullable<ReturnType<typeof useProjectStore.getState>["nodes"][number]>;
+  onClose: () => void;
+  showToast: (msg: string, options?: { durationMs?: number }) => void;
+}) {
+  const skillId = node.data.skillId?.trim() || "";
+  const title =
+    (node.data.skillTitle || node.data.label || node.data.skillName || "Skill").trim();
+  const version = node.data.skillVersion?.trim() || "";
+  const name = node.data.skillName?.trim() || "";
+  const agent = node.data.skillAgent?.trim() || "";
+  const agentLabel = agent ? SKILL_AGENT_LABEL[agent] ?? agent : "";
+  const [body, setBody] = useState<string | null>(null);
+  const [loading, setLoading] = useState(Boolean(skillId));
+  const [error, setError] = useState<string | null>(null);
+  const [retryKey, setRetryKey] = useState(0);
+
+  useEffect(() => {
+    if (!skillId) {
+      setBody(null);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+    const ac = new AbortController();
+    setLoading(true);
+    setError(null);
+    setBody(null);
+    void getAgentSkill(skillId, { signal: ac.signal })
+      .then((row) => {
+        if (ac.signal.aborted) return;
+        setBody(row.body ?? "");
+        setError(null);
+      })
+      .catch((err: unknown) => {
+        if (ac.signal.aborted) return;
+        if (
+          (typeof DOMException !== "undefined" &&
+            err instanceof DOMException &&
+            err.name === "AbortError") ||
+          (err instanceof Error && err.name === "AbortError")
+        ) {
+          return;
+        }
+        const message =
+          err instanceof Error ? err.message : "加载 Skill 正文失败";
+        setError(message);
+        setBody(null);
+        showToast(message);
+      })
+      .finally(() => {
+        if (!ac.signal.aborted) setLoading(false);
+      });
+    return () => ac.abort();
+  }, [skillId, retryKey, showToast]);
+
+  return (
+    <>
+      <header className="flex shrink-0 items-start justify-between gap-3 border-b border-white/6 px-4 py-3">
+        <div className="min-w-0">
+          <p className="font-mono text-[10px] tracking-wider text-zinc-500">
+            Skill · 只读
+          </p>
+          <p className="truncate text-[14px] font-medium text-zinc-100">{title}</p>
+          <p className="truncate font-mono text-[11px] text-zinc-500">
+            {name || "—"}
+            {version ? ` @ v${version}` : ""}
+            {agentLabel ? ` · ${agentLabel}` : ""}
+          </p>
+        </div>
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          aria-label="关闭详情"
+          onClick={onClose}
+        >
+          <X className="size-4" />
+        </Button>
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3" data-testid="skill-detail-body">
+        {!skillId ? (
+          <p className="py-10 text-center text-[13px] text-zinc-500">
+            缺少 skillId，无法拉取正文
+          </p>
+        ) : loading ? (
+          <div className="flex items-center gap-2 py-8 text-[12px] text-zinc-500">
+            <Loader2 className="size-3.5 animate-spin" />
+            加载正文…
+          </div>
+        ) : error ? (
+          <div className="flex flex-col items-center gap-3 py-8 text-center">
+            <p className="text-[12px] text-red-300/90">{error}</p>
+            <button
+              type="button"
+              data-testid="skill-detail-retry"
+              onClick={() => setRetryKey((k) => k + 1)}
+              className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[12px] text-zinc-300 hover:bg-white/10"
+            >
+              重试
+            </button>
+          </div>
+        ) : body?.trim() ? (
+          <pre className="whitespace-pre-wrap break-words font-sans text-[13px] leading-relaxed text-zinc-300">
+            {body}
+          </pre>
+        ) : (
+          <p className="py-10 text-center text-[13px] text-zinc-500">正文为空</p>
+        )}
+      </div>
+    </>
+  );
+}
+

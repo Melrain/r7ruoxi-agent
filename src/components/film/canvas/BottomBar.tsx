@@ -1,9 +1,10 @@
 "use client"
 
 import { useState, type ReactNode } from "react"
-import { FolderOpen, Hand, LayoutTemplate, Map, Plus, Search, Sparkles, Table2 } from "lucide-react"
+import { FolderOpen, Hand, LayoutTemplate, Map, Plus, Search, Sparkles, Table2, Wand2 } from "lucide-react"
 import { AddNodePanel } from "@/components/film/canvas/AddNodePanel"
 import { AssetLibrarySheet } from "@/components/film/canvas/AssetLibrarySheet"
+import { SkillLibrarySheet } from "@/components/film/canvas/SkillLibrarySheet"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -92,6 +93,8 @@ export function BottomBar({
   const [plusOpen, setPlusOpen] = useState(false)
   const libraryOpen = useProjectStore((s) => s.assetLibraryOpen)
   const setLibraryOpen = useProjectStore((s) => s.setAssetLibraryOpen)
+  const skillLibraryOpen = useProjectStore((s) => s.skillLibraryOpen)
+  const setSkillLibraryOpen = useProjectStore((s) => s.setSkillLibraryOpen)
 
   return (
     <TooltipProvider delayDuration={280}>
@@ -102,7 +105,10 @@ export function BottomBar({
               open={plusOpen}
               onOpenChange={(open) => {
                 setPlusOpen(open)
-                if (open) setLibraryOpen(false)
+                if (open) {
+                  setLibraryOpen(false)
+                  setSkillLibraryOpen(false)
+                }
               }}
             >
               <DropdownMenuTrigger
@@ -151,6 +157,13 @@ export function BottomBar({
                     setPlusOpen(false)
                     setLibraryOpen(true)
                   }}
+                  onOpenSkillLibrary={() => {
+                    setPlusOpen(false)
+                    setSkillLibraryOpen(true)
+                  }}
+                  onSkillPlaced={() => {
+                    setPlusOpen(false)
+                  }}
                 />
               </DropdownMenuContent>
             </DropdownMenu>
@@ -169,6 +182,22 @@ export function BottomBar({
             >
               <FolderOpen className="size-3.5 text-zinc-400" />
               资产库
+            </button>
+          </BarTip>
+
+          <BarTip label="Skill" shortcut="Skill 库 · 放到画布后连线装配">
+            <button
+              type="button"
+              aria-label="Skill"
+              data-testid="skill-library-trigger"
+              onClick={() => {
+                setPlusOpen(false)
+                setSkillLibraryOpen(true)
+              }}
+              className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[12px] text-zinc-200 hover:bg-white/6"
+            >
+              <Wand2 className="size-3.5 text-zinc-400" />
+              Skill
             </button>
           </BarTip>
 
@@ -252,6 +281,7 @@ export function BottomBar({
           </BarTip>
         ) : null}
         <AssetLibrarySheet open={libraryOpen} onOpenChange={setLibraryOpen} />
+        <SkillLibrarySheet open={skillLibraryOpen} onOpenChange={setSkillLibraryOpen} />
       </div>
     </TooltipProvider>
   )

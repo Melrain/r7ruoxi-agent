@@ -1,6 +1,7 @@
 "use client";
 
-import { Play, RotateCcw, X } from "lucide-react";
+import { Play, RotateCcw, Square, X } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -23,6 +24,10 @@ import type {
   AppNode,
   AssetKind,
 } from "@/components/film/canvas/types/project";
+import {
+  listAgentSkills,
+  type AgentSkillListItem,
+} from "@/lib/api/skills";
 
 function Pill({ state }: { state: PromptPillState }) {
   const tone =
@@ -56,6 +61,7 @@ export function AgentPromptPanel({ node }: { node: AppNode }) {
   const updateNodeData = useProjectStore((s) => s.updateNodeData);
   const closeNodeDetail = useProjectStore((s) => s.closeNodeDetail);
   const runAgent = useProjectStore((s) => s.runAgent);
+  const cancelAgentRun = useProjectStore((s) => s.cancelAgentRun);
   const showToast = useProjectStore((s) => s.showToast);
 
   const spec = specOf(node);
@@ -76,6 +82,32 @@ export function AgentPromptPanel({ node }: { node: AppNode }) {
   const missing = missingSlots(spec, override, inboundKinds);
   const running = node.data.status === "running";
   const canRun = Boolean(inspect?.canRun) && missing.length === 0;
+  const isParse = node.data.agentId === "parse";
+  const [skills, setSkills] = useState<AgentSkillListItem[]>([]);
+  const [skillsLoading, setSkillsLoading] = useState(false);
+  const [skillsError, setSkillsError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isParse) return;
+    let cancelled = false;
+    setSkillsLoading(true);
+    setSkillsError(null);
+    void listAgentSkills({ agent: "parse", status: "published" })
+      .then((rows) => {
+        if (cancelled) return;
+        setSkills(rows.filter((r) => r.source === "official" || r.status === "published"));
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setSkillsError(err instanceof Error ? err.message : "加载 Skill 失败");
+      })
+      .finally(() => {
+        if (!cancelled) setSkillsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isParse]);
 
   const writeOverride = (patch: AgentPromptOverride) => {
     updateNodeData(node.id, {
@@ -116,15 +148,27 @@ export function AgentPromptPanel({ node }: { node: AppNode }) {
             <RotateCcw className="size-3.5" />
             恢复目录默认
           </Button>
-          <Button
-            size="sm"
-            disabled={!canRun || running}
-            onClick={() => void runAgent(node.id)}
-            className="gap-1.5"
-          >
-            <Play className="size-3.5 fill-current" />
-            {running ? "生成中" : "跑一次"}
-          </Button>
+          {running ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => cancelAgentRun(node.id)}
+              className="gap-1.5"
+            >
+              <Square className="size-3 fill-current" />
+              取消
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              disabled={!canRun}
+              onClick={() => void runAgent(node.id)}
+              className="gap-1.5"
+            >
+              <Play className="size-3.5 fill-current" />
+              跑一次
+            </Button>
+          )}
           <Button
             size="icon-sm"
             variant="ghost"
@@ -176,6 +220,81 @@ export function AgentPromptPanel({ node }: { node: AppNode }) {
             <p className="mt-2 text-[12px] text-zinc-600">还没有输入连上</p>
           )}
         </section>
+
+
+        {isParse ? (
+          <section
+            data-testid="agent-skill-select"
+            className="border-b border-white/6 px-5 py-4"
+          >
+            <p className="mb-2 font-mono text-[10px] tracking-[0.18em] text-zinc-500">
+              Skill 装配
+            </p>
+            <p className="mb-3 text-[12px] leading-relaxed text-zinc-500">
+              主路径：从底部栏 /「+」打开 Skill 库 → 放到画布 → 右出点连到本智能体。
+              入边 Skill 为真相源；下方下拉仅作次要兜底。
+            </p>
+            <details className="rounded-lg border border-white/8 bg-black/20 px-3 py-2">
+              <summary className="cursor-pointer select-none text-[12px] text-zinc-400">
+                次要：节点 skillId 下拉
+              </summary>
+              <select
+                className="mt-2 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-[13px] text-zinc-100 outline-none focus:border-violet-400/50"
+                value={node.data.skillId ?? ""}
+                disabled={skillsLoading}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  if (!id) {
+                    updateNodeData(node.id, {
+                      skillId: undefined,
+                      skillName: undefined,
+                    });
+                    return;
+                  }
+                  const hit = skills.find((s) => s.id === id);
+                  updateNodeData(node.id, {
+                    skillId: id,
+                    skillName: hit?.name,
+                  });
+                }}
+              >
+                <option value="">
+                  {skillsLoading
+                    ? "加载中…"
+                    : "默认（服务端 video-parse / 目录）"}
+                </option>
+                {skills.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.title} · {s.name}@{s.version}
+                  </option>
+                ))}
+              </select>
+              {skillsError ? (
+                <p className="mt-2 text-[11px] text-rose-300">{skillsError}</p>
+              ) : (
+                <p className="mt-2 text-[11px] text-zinc-600">
+                  跑解析时优先用入边 Skill 的 skillId，其次才用本下拉。
+                </p>
+              )}
+            </details>
+            <label className="mt-4 block">
+              <span className="mb-1.5 block font-mono text-[10px] tracking-[0.18em] text-zinc-500">
+                短补充（可选）
+              </span>
+              <Textarea
+                value={node.data.promptSupplement ?? ""}
+                onChange={(e) =>
+                  updateNodeData(node.id, {
+                    promptSupplement: e.target.value || undefined,
+                  })
+                }
+                rows={3}
+                placeholder="追加到 Skill / 目录默认之后的短补充…"
+                className="min-h-[72px] resize-y border-white/8 bg-black/30 text-[13px] leading-6"
+              />
+            </label>
+          </section>
+        ) : null}
 
         {/* Bottom: prompts */}
         <section className="space-y-5 px-5 py-5">

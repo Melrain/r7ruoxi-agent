@@ -1,6 +1,7 @@
 "use client";
 
-import { Handle, Position, type NodeProps } from "@xyflow/react";
+import { Position, type NodeProps } from "@xyflow/react";
+import { LitHandle } from "@/components/film/canvas/nodes/LitHandle";
 import { ArrowRight, ImageIcon, Loader2, RefreshCw } from "lucide-react";
 import { useEffect, useState, type MouseEvent } from "react";
 import {
@@ -176,11 +177,20 @@ export function TextAssetCardNode({ id, data, selected }: NodeProps<AppNode>) {
           running && "opacity-95",
         )}
       >
-        <Handle
+        <LitHandle
+          id="in"
           type="target"
           position={Position.Left}
+          primaryForNull
           className="node-handle"
           isConnectable={false}
+          style={{ background: color, opacity: 0, pointerEvents: "none" }}
+        />
+        <LitHandle
+          id="out-l"
+          type="source"
+          position={Position.Left}
+          className="node-handle"
           style={{ background: color }}
         />
         <div className="p-3">
@@ -262,9 +272,11 @@ export function TextAssetCardNode({ id, data, selected }: NodeProps<AppNode>) {
             </div>
           ) : null}
         </div>
-        <Handle
+        <LitHandle
+          id="out"
           type="source"
           position={Position.Right}
+          primaryForNull
           className="node-handle"
           style={{ background: color }}
         />

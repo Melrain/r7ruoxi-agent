@@ -1,6 +1,7 @@
 "use client";
 
-import { Handle, Position, type NodeProps } from "@xyflow/react";
+import { Position, type NodeProps } from "@xyflow/react";
+import { LitHandle } from "@/components/film/canvas/nodes/LitHandle";
 import {
   ArrowRight,
   BookOpen,
@@ -9,6 +10,7 @@ import {
   MapPinned,
   Paperclip,
   Sparkles,
+  Wand2,
   Table2,
   UserRound,
   Video,
@@ -18,7 +20,7 @@ import { useState, type ComponentType, type ReactNode } from "react";
 import { fallbackPoster } from "@/components/film/canvas/lib/mock/assets";
 import { agentsAccepting, assetKindOf } from "@/components/film/canvas/lib/agent-catalog";
 import { AssignAgentMenu } from "@/components/film/canvas/nodes/AssignAgentMenu";
-import { PORT_COLOR } from "@/components/film/canvas/lib/port-color";
+import { ASSET_IN_PORT_COLOR, PORT_COLOR, SKILL_PORT_COLOR } from "@/components/film/canvas/lib/port-color";
 import { cn } from "@/lib/utils";
 import { KIND_LABEL, STATUS_LABEL } from "@/components/film/canvas/lib/labels";
 import { useProjectStore } from "@/components/film/canvas/store/project-store";
@@ -35,6 +37,7 @@ const ICONS: Record<NodeKind, ComponentType<{ className?: string }>> = {
   scene: MapPinned,
   character: UserRound,
   agent: Sparkles,
+  skill: Wand2,
 };
 
 const ICON_TONE: Record<NodeKind, string> = {
@@ -48,6 +51,7 @@ const ICON_TONE: Record<NodeKind, string> = {
   scene: "text-emerald-400",
   character: "text-rose-300",
   agent: "text-[#a78bfa]",
+  skill: "text-[#c4b5fd]",
 };
 
 const CHIP: Record<NodeKind, string> = {
@@ -61,6 +65,7 @@ const CHIP: Record<NodeKind, string> = {
   scene: "border-emerald-500/25 bg-emerald-500/10 text-emerald-300",
   character: "border-rose-500/25 bg-rose-500/10 text-rose-300",
   agent: "border-[#a78bfa]/30 bg-[#a78bfa]/10 text-[#a78bfa]",
+  skill: "border-[#a78bfa]/30 bg-[#a78bfa]/10 text-[#c4b5fd]",
 };
 
 const FAMILY: Record<NodeKind, string> = {
@@ -74,6 +79,7 @@ const FAMILY: Record<NodeKind, string> = {
   character: "node-card-rose",
   audio: "node-card-violet",
   agent: "",
+  skill: "node-card-neutral",
 };
 
 export function StatusBadge({ status }: { status: NodeStatus }) {
@@ -145,9 +151,15 @@ export function NodeChrome({
   data,
   children,
   width = 300,
+  skillPort,
 }: Pick<NodeProps<AppNode>, "id" | "selected" | "data"> & {
   children: ReactNode;
   width?: number;
+  /** Typed Skill 入点（parse 等可装配智能体）；与资产入点分离. */
+  skillPort?: {
+    show: boolean;
+    equipped: boolean;
+  };
 }) {
   const renaming = useProjectStore((s) => s.renamingNodeId === id);
   const setRenamingNodeId = useProjectStore((s) => s.setRenamingNodeId);
@@ -171,13 +183,126 @@ export function NodeChrome({
           (data.status === "running" || data.status === "uploading") && "is-running"
         )}
       >
-        <Handle
-          type="target"
-          position={Position.Left}
-          className="node-handle"
-          isConnectable={isAgent}
-          style={{ background: isAgent ? "#38bdf8" : PORT_COLOR[data.kind] }}
-        />
+        {isAgent ? (
+          <>
+            {/* L/R only: skill-in + asset-in on both sides; nearest side picked on connect/drag */}
+            {skillPort?.show ? (
+              <>
+                <LitHandle
+                  id="skill"
+                  type="target"
+                  position={Position.Left}
+                  data-testid="agent-skill-handle"
+                  aria-label={skillPort.equipped ? "Skill 已装配" : "Skill 入点"}
+                  title={skillPort.equipped ? "Skill 已装配" : "Skill 入点 · 仅接 Skill 卡"}
+                  className={cn(
+                    "node-handle node-handle-skill",
+                    skillPort.equipped ? undefined : "is-empty",
+                  )}
+                  isConnectable
+                  style={{
+                    top: 28,
+                    background: skillPort.equipped ? SKILL_PORT_COLOR : "#0c1018",
+                  }}
+                />
+                <LitHandle
+                  id="skill-r"
+                  type="target"
+                  position={Position.Right}
+                  data-testid="agent-skill-handle-r"
+                  aria-label={skillPort.equipped ? "Skill 已装配" : "Skill 入点"}
+                  title={skillPort.equipped ? "Skill 已装配" : "Skill 入点 · 仅接 Skill 卡"}
+                  className={cn(
+                    "node-handle node-handle-skill",
+                    skillPort.equipped ? undefined : "is-empty",
+                  )}
+                  isConnectable
+                  style={{
+                    top: 28,
+                    background: skillPort.equipped ? SKILL_PORT_COLOR : "#0c1018",
+                  }}
+                />
+                <LitHandle
+                  id="in"
+                  type="target"
+                  position={Position.Left}
+                  primaryForNull
+                  data-testid="agent-in-handle"
+                  aria-label="资产入点"
+                  title="资产入点 · Asset in"
+                  className="node-handle node-handle-asset"
+                  isConnectable
+                  style={{ top: "62%", background: ASSET_IN_PORT_COLOR }}
+                />
+                <LitHandle
+                  id="in-r"
+                  type="target"
+                  position={Position.Right}
+                  aria-label="资产入点"
+                  title="资产入点 · Asset in"
+                  className="node-handle node-handle-asset"
+                  isConnectable
+                  style={{ top: "62%", background: ASSET_IN_PORT_COLOR }}
+                />
+              </>
+            ) : (
+              <>
+                <LitHandle
+                  id="in"
+                  type="target"
+                  position={Position.Left}
+                  primaryForNull
+                  data-testid="agent-in-handle"
+                  aria-label="资产入点"
+                  title="资产入点 · Asset in"
+                  className="node-handle node-handle-asset"
+                  isConnectable
+                  style={{ background: ASSET_IN_PORT_COLOR }}
+                />
+                <LitHandle
+                  id="in-r"
+                  type="target"
+                  position={Position.Right}
+                  aria-label="资产入点"
+                  title="资产入点 · Asset in"
+                  className="node-handle node-handle-asset"
+                  isConnectable
+                  style={{ background: ASSET_IN_PORT_COLOR }}
+                />
+              </>
+            )}
+            <LitHandle
+              id="out"
+              type="source"
+              position={Position.Right}
+              primaryForNull
+              className="node-handle node-handle-out"
+              isConnectable={false}
+              style={{ background: PORT_COLOR[data.kind] }}
+            />
+          </>
+        ) : (
+          <>
+            {/* Asset chrome: L+R emit; quiet target for auto product in */}
+            <LitHandle
+              id="in"
+              type="target"
+              position={Position.Left}
+              primaryForNull
+              className="node-handle"
+              isConnectable={false}
+              style={{ background: PORT_COLOR[data.kind], opacity: 0, pointerEvents: "none" }}
+            />
+            <LitHandle
+              id="out-l"
+              type="source"
+              position={Position.Left}
+              className="node-handle"
+              isConnectable
+              style={{ background: PORT_COLOR[data.kind] }}
+            />
+          </>
+        )}
         <div className={isAgent ? "p-0" : "p-5"}>
           {isAgent ? null : (
             <div className="mb-3 flex items-center justify-between gap-2 border-b border-white/[0.06] pb-3.5">
@@ -242,13 +367,17 @@ export function NodeChrome({
             </div>
           ) : null}
         </div>
-        <Handle
-          type="source"
-          position={Position.Right}
-          className={cn("node-handle", isAgent && "node-handle-out")}
-          isConnectable={!isAgent}
-          style={{ background: PORT_COLOR[data.kind] }}
-        />
+        {!isAgent ? (
+          <LitHandle
+            id="out"
+            type="source"
+            position={Position.Right}
+            primaryForNull
+            className="node-handle"
+            isConnectable
+            style={{ background: PORT_COLOR[data.kind] }}
+          />
+        ) : null}
       </div>
     </div>
   );

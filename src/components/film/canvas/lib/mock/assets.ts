@@ -11,6 +11,7 @@ const KIND_COLOR: Record<NodeKind, string> = {
   scene: "#365314",
   character: "#7f1d1d",
   agent: "#164e63",
+  skill: "#2e1065",
 };
 
 export function svgPoster(

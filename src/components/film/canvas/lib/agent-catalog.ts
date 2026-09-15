@@ -187,13 +187,119 @@ export function isAgentNode(node: AppNode | undefined): boolean {
   return node?.data.role === "agent" || node?.data.kind === "agent";
 }
 
+export function isSkillNode(node: AppNode | undefined): boolean {
+  return node?.data.role === "skill" || node?.data.kind === "skill";
+}
+
 export function isAssetNode(node: AppNode | undefined): boolean {
-  return Boolean(node) && !isAgentNode(node);
+  return Boolean(node) && !isAgentNode(node) && !isSkillNode(node);
 }
 
 export function assetKindOf(node: AppNode | undefined): AssetKind | null {
-  if (!node || isAgentNode(node)) return null;
+  if (!node || isAgentNode(node) || isSkillNode(node)) return null;
   return isAssetKind(node.data.kind) ? node.data.kind : null;
+}
+
+/** 本刀可注入装配的智能体（analyze 走 Nest skillId）。 */
+export const SKILL_ASSEMBLABLE_AGENTS = new Set<string>(["parse"]);
+
+export const SKILL_AGENT_LABEL: Record<string, string> = {
+  parse: "视频解析",
+  script: "生成剧本",
+  image: "出图",
+};
+
+export function shortSkillTitle(title?: string | null, fallback = "Skill"): string {
+  const t = (title ?? "").trim() || fallback;
+  return t.length > 10 ? `${t.slice(0, 10)}…` : t;
+}
+
+export interface EquippedSkill {
+  skillNodeId: string;
+  skillId: string;
+  title: string;
+  version?: string;
+  name?: string;
+  agent?: string;
+  bodyPreview?: string;
+}
+
+/** 入边 Skill 卡 = 已装配；边为真相源。 */
+export function resolveEquippedSkill(
+  agentNodeId: string,
+  nodes: AppNode[],
+  edges: AppEdge[],
+): EquippedSkill | null {
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  for (const edge of edges) {
+    if (edge.target !== agentNodeId) continue;
+    if (edge.data?.edgeKind === "out") continue;
+    const src = byId.get(edge.source);
+    if (!isSkillNode(src) || !src) continue;
+    const skillId = src.data.skillId?.trim();
+    if (!skillId) continue;
+    return {
+      skillNodeId: src.id,
+      skillId,
+      title: (src.data.skillTitle || src.data.label || src.data.skillName || "Skill").trim(),
+      version: src.data.skillVersion,
+      name: src.data.skillName,
+      agent: src.data.skillAgent,
+      bodyPreview: src.data.skillBodyPreview,
+    };
+  }
+  return null;
+}
+
+export interface HandoffOption {
+  spec: AgentSpec;
+  enabled: boolean;
+  reason?: string;
+}
+
+/** Skill 右出点「交给」菜单：可装配优先；否则灰显 + 原因。 */
+export function skillHandoffOptions(skillAgent?: string | null): HandoffOption[] {
+  const face = (skillAgent ?? "").trim();
+  return AGENT_CATALOG.map((spec) => {
+    if (face && spec.id !== face) {
+      const faceLabel = SKILL_AGENT_LABEL[face] ?? face;
+      return {
+        spec,
+        enabled: false,
+        reason: `此 Skill 面向${faceLabel}，不能装到${spec.label}`,
+      };
+    }
+    if (!SKILL_ASSEMBLABLE_AGENTS.has(spec.id)) {
+      return {
+        spec,
+        enabled: false,
+        reason: `${spec.label}暂不支持 Skill 装配`,
+      };
+    }
+    return { spec, enabled: true };
+  });
+}
+
+export function skillAssembleRejectReason(
+  skill: AppNode | undefined,
+  agent: AppNode | undefined,
+): string | null {
+  if (!skill || !isSkillNode(skill)) return "找不到 Skill";
+  if (!agent || !isAgentNode(agent)) return "只能连到智能体";
+  const spec = specOf(agent);
+  if (!spec) return "找不到智能体合同";
+  const face = skill.data.skillAgent?.trim();
+  if (face && spec.id !== face) {
+    const faceLabel = SKILL_AGENT_LABEL[face] ?? face;
+    return `此 Skill 面向${faceLabel}，不能装到${spec.label}`;
+  }
+  if (!SKILL_ASSEMBLABLE_AGENTS.has(spec.id)) {
+    return `${spec.label}暂不支持 Skill 装配`;
+  }
+  if (!skill.data.skillId?.trim()) {
+    return "Skill 卡缺少 skillId";
+  }
+  return null;
 }
 
 export function agentsAccepting(kind: AssetKind): AgentSpec[] {
@@ -201,11 +307,7 @@ export function agentsAccepting(kind: AssetKind): AgentSpec[] {
 }
 
 /** 交给菜单统一源：兼容可点；不兼容灰显 + 原因 */
-export interface HandoffOption {
-  spec: AgentSpec;
-  enabled: boolean;
-  reason?: string;
-}
+
 
 export function handoffOptions(kind: AssetKind): HandoffOption[] {
   return AGENT_CATALOG.map((spec) => {
@@ -233,16 +335,61 @@ export function missingInputs(
   return spec.accepts;
 }
 
+export type ConnectHandles = {
+  sourceHandle?: string | null;
+  targetHandle?: string | null;
+};
+
+/** Agent Skill 入点：`skill` 或 `skill-*`. */
+export function isSkillInHandle(th: string | null | undefined): boolean {
+  return typeof th === "string" && (th === "skill" || th.startsWith("skill-"));
+}
+
+/** Agent 资产入点：`in` / `in-*` / `in_*`. */
+export function isAssetInHandle(th: string | null | undefined): boolean {
+  return (
+    typeof th === "string" &&
+    (th === "in" || th.startsWith("in-") || th.startsWith("in_"))
+  );
+}
+
 export function connectRejectReason(
   source: AppNode | undefined,
-  target: AppNode | undefined
+  target: AppNode | undefined,
+  handles?: ConnectHandles
 ): string | null {
   if (!source || !target) return "找不到节点";
   if (source.id === target.id) return "不能连到自己";
   if (isAgentNode(source) && isAgentNode(target)) return "智能体不能互连";
+
+  const th = handles?.targetHandle ?? null;
+
+  // Typed ports on agent: skill vs in (incl. compass aliases in-t / in-r / …)
+  if (isAgentNode(target) && isSkillInHandle(th)) {
+    if (!isSkillNode(source)) return "此入点只接 Skill";
+    return skillAssembleRejectReason(source, target);
+  }
+  if (isAgentNode(target) && isAssetInHandle(th) && isSkillNode(source)) {
+    return "Skill 请连到 Skill 入点";
+  }
+
+  // Skill → Agent = 装配；其它 Skill 连线一律拒绝
+  if (isSkillNode(source) || isSkillNode(target)) {
+    if (isSkillNode(source) && isAgentNode(target)) {
+      return skillAssembleRejectReason(source, target);
+    }
+    if (isSkillNode(target)) return "Skill 卡只出不入";
+    if (isSkillNode(source) && isAssetNode(target)) {
+      return "Skill 请连到智能体以装配";
+    }
+    return "不能这样连 Skill";
+  }
   if (isAssetNode(source) && isAssetNode(target)) return "资产之间不能连，请交给智能体";
   if (isAgentNode(source) && isAssetNode(target)) {
     return "产出由智能体跑出来，不能手连";
+  }
+  if (isAgentNode(target) && isSkillInHandle(th)) {
+    return "此入点只接 Skill";
   }
   const kind = assetKindOf(source);
   const spec = specOf(target);
@@ -255,9 +402,10 @@ export function connectRejectReason(
 
 export function canConnect(
   source: AppNode | undefined,
-  target: AppNode | undefined
+  target: AppNode | undefined,
+  handles?: ConnectHandles
 ): boolean {
-  return connectRejectReason(source, target) === null;
+  return connectRejectReason(source, target, handles) === null;
 }
 
 export function assetLabel(kind: AssetKind): string {
