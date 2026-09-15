@@ -58,6 +58,9 @@ export const FILM_STAGE_STATUSES = [
 
 export type FilmStageStatus = (typeof FILM_STAGE_STATUSES)[number]
 
+/** Aligned with web / Nest film upload limit. */
+export const FILM_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+
 export const FILM_REFERENCE_SOURCES = ["url", "upload"] as const
 export type FilmReferenceSource = (typeof FILM_REFERENCE_SOURCES)[number]
 
@@ -211,11 +214,21 @@ export type FilmBreakdownItem = {
   kind?: string
   /** 镜号；Nest 可能给 shotIndex / index */
   shotIndex?: number
+  /** 镜号文案；画布优先于 title */
+  shotNo?: string
+  /** 画面描述；也可由后端用中文字段 画面 回传 */
+  visual?: string
+  "画面"?: string
   /** 画面帧 URL（若 Nest 挂在条目上） */
   frameUrl?: string
   mediaUrl?: string
   /** 对白；缺省时用 body（spoken）或与 title/body 映射 */
   dialogue?: string
+  "对白"?: string
+  mode?: string
+  stub?: boolean
+  blocked?: boolean
+  hadFrames?: boolean
 }
 
 /** Nest package.meta.analyze — 拆解诚实状态，勿另造字段名。 */
@@ -225,6 +238,7 @@ export type FilmAnalyzeMeta = {
   hadTranscript?: boolean
   blocked?: boolean
   fallbackFrom?: string
+  error?: string
 }
 
 export type FilmPackageMeta = {
@@ -381,12 +395,14 @@ function parseAnalyzeMeta(value: unknown): FilmAnalyzeMeta | undefined {
   const hadFrames = typeof record.hadFrames === "boolean" ? record.hadFrames : undefined
   const hadTranscript = typeof record.hadTranscript === "boolean" ? record.hadTranscript : undefined
   const blocked = typeof record.blocked === "boolean" ? record.blocked : undefined
+  const error = asString(record.error)
   if (
     mode === undefined &&
     fallbackFrom === undefined &&
     hadFrames === undefined &&
     hadTranscript === undefined &&
-    blocked === undefined
+    blocked === undefined &&
+    error === undefined
   ) {
     return undefined
   }
@@ -396,6 +412,7 @@ function parseAnalyzeMeta(value: unknown): FilmAnalyzeMeta | undefined {
     ...(hadFrames !== undefined ? { hadFrames } : {}),
     ...(hadTranscript !== undefined ? { hadTranscript } : {}),
     ...(blocked !== undefined ? { blocked } : {}),
+    ...(error ? { error } : {}),
   }
 }
 

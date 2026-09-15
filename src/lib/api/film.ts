@@ -1,13 +1,24 @@
 import { backendFetch } from "@/lib/api/client"
-import { parseFilmGrokPreflight, parseFilmGrokThread, type FilmGrokThread, type FilmRunnerSource } from "@/lib/film-grok-preflight"
+import {
+  canFilmAnalyze,
+  filmAnalyzeGateReason,
+  filmGrokAuthLabel as filmGrokAuthLabelFromPreflight,
+  parseFilmGrokPreflight,
+  parseFilmGrokThread,
+  type FilmGrokPreflight,
+  type FilmGrokThread,
+  type FilmRunnerSource,
+} from "@/lib/film-grok-preflight"
 import {
   asRecord,
   parseFilmNextAction,
   parseFilmPackage,
   parseFilmPhase,
+  type FilmBreakdownItem,
   type FilmNextAction,
   type FilmPackage,
   type FilmPhase,
+  type FilmReference,
 } from "@/lib/film-package"
 
 const LIST_TIMEOUT_MS = 15_000
@@ -35,6 +46,9 @@ export type FilmProjectSummary = {
   title: string
   phase?: FilmPhase
   updatedAt?: string
+  /** Nest list field — canvas dedicated-project picker */
+  lastOpenedAt?: string
+  status?: "active" | "archived"
 }
 
 export type FilmExecutor = {
@@ -67,11 +81,19 @@ function parseSummary(value: unknown): FilmProjectSummary | null {
   const id = typeof record?.id === "string" ? record.id : ""
   const title = typeof record?.title === "string" ? record.title : ""
   if (!id || !title) return null
+  const lastOpenedAt =
+    typeof record?.lastOpenedAt === "string" ? record.lastOpenedAt : undefined
+  const status =
+    record?.status === "active" || record?.status === "archived"
+      ? record.status
+      : undefined
   return {
     id,
     title,
     phase: parseFilmPhase(record?.phase),
     updatedAt: typeof record?.updatedAt === "string" ? record.updatedAt : undefined,
+    ...(lastOpenedAt ? { lastOpenedAt } : {}),
+    ...(status ? { status } : {}),
   }
 }
 
@@ -188,9 +210,17 @@ export async function deleteFilmProject(projectId: string, options?: { signal?: 
 }
 
 /** Nest HTTP：VPS Grok CLI preflight 运输层（GrokCli/vps 调用；非本机探测）。 */
-export async function getFilmGrokPreflight(options?: { signal?: AbortSignal }) {
+export async function getFilmGrokPreflight(options?: {
+  signal?: AbortSignal
+  preferredSource?: FilmRunnerSource
+}) {
+  const preferred = options?.preferredSource
+  const qs =
+    preferred === "local" || preferred === "vps"
+      ? `?preferredSource=${encodeURIComponent(preferred)}`
+      : ""
   return parseFilmGrokPreflight(
-    await backendFetch<unknown>("/api/backend/internal/film/grok/preflight", {
+    await backendFetch<unknown>(`/api/backend/internal/film/grok/preflight${qs}`, {
       timeoutMs: PREFLIGHT_TIMEOUT_MS,
       signal: options?.signal,
     }),
@@ -199,9 +229,19 @@ export async function getFilmGrokPreflight(options?: { signal?: AbortSignal }) {
 
 export async function addFilmReference(
   projectId: string,
-  input: { url: string } | { file: File },
+  input: { url: string } | { file: File } | FormData,
   options?: { signal?: AbortSignal },
 ) {
+  if (input instanceof FormData) {
+    return requireProject(
+      await backendFetch<unknown>(projectPath(projectId, "/references"), {
+        method: "POST",
+        body: input,
+        timeoutMs: UPLOAD_TIMEOUT_MS,
+        signal: options?.signal,
+      }),
+    )
+  }
   if ("file" in input) {
     const form = new FormData()
     form.append("file", input.file)
@@ -229,13 +269,20 @@ export async function addFilmReference(
 export async function analyzeFilmReference(
   projectId: string,
   refId: string,
-  options?: { signal?: AbortSignal },
+  options?: { signal?: AbortSignal; preferredSource?: FilmRunnerSource },
 ) {
+  const preferred = options?.preferredSource
+  const body =
+    preferred === "local" || preferred === "vps"
+      ? JSON.stringify({ preferredSource: preferred })
+      : undefined
   return requireProject(
     await backendFetch<unknown>(
       projectPath(projectId, `/references/${encodeURIComponent(refId)}/analyze`),
       {
         method: "POST",
+        headers: body ? { "Content-Type": "application/json" } : undefined,
+        body,
         timeoutMs: ANALYZE_TIMEOUT_MS,
         signal: options?.signal,
       },
@@ -335,3 +382,110 @@ export async function rejectFilmStage(
     ),
   )
 }
+
+/** Web-isomorphic aliases used by Melrain canvas. */
+export type FilmBreakdownCard = FilmBreakdownItem
+export type FilmProjectThread = FilmProject
+export type { FilmReference, FilmGrokPreflight }
+export type FilmExecSource = FilmRunnerSource
+
+export function filmGrokAllowsAnalyze(
+  preflight?: FilmGrokPreflight,
+  project?: Pick<FilmProject, "nextAction" | "grok">,
+) {
+  if (!canFilmAnalyze(preflight)) return false
+  if (project?.nextAction?.id === "grok_login") return false
+  if (project?.grok && project.grok.authOk !== true) return false
+  return true
+}
+
+export function filmGrokAuthIssue(preflight: FilmGrokPreflight) {
+  return filmAnalyzeGateReason(preflight) || filmGrokAuthLabelFromPreflight(preflight)
+}
+
+export async function getFilmProject(
+  projectId: string,
+  options?: { signal?: AbortSignal },
+) {
+  return requireProject(
+    await backendFetch<unknown>(projectPath(projectId), {
+      timeoutMs: LIST_TIMEOUT_MS,
+      signal: options?.signal,
+    }),
+  )
+}
+
+export const FILM_LIBRARY_KINDS = ["video", "image", "audio", "file"] as const
+export type FilmLibraryKind = (typeof FILM_LIBRARY_KINDS)[number]
+
+export type FilmLibraryItem = {
+  id: string
+  assetId: string
+  kind: FilmLibraryKind
+  title: string
+  mimeType: string
+  size?: number
+  createdAt?: string
+  projectId?: string
+  url: string
+}
+
+export type FilmLibraryPage = {
+  items: FilmLibraryItem[]
+  nextCursor?: string
+}
+
+export async function listFilmLibrary(options?: {
+  kind?: FilmLibraryKind
+  cursor?: string
+  limit?: number
+  signal?: AbortSignal
+}) {
+  const params = new URLSearchParams()
+  if (options?.kind) params.set("kind", options.kind)
+  if (options?.cursor) params.set("cursor", options.cursor)
+  if (options?.limit !== undefined) params.set("limit", String(options.limit))
+  const qs = params.toString()
+  return backendFetch<FilmLibraryPage>(
+    `/api/backend/internal/film/library${qs ? `?${qs}` : ""}`,
+    {
+      timeoutMs: 30_000,
+      signal: options?.signal,
+    },
+  )
+}
+
+export type FilmLibraryResolveItem = {
+  assetId: string
+  url: string
+}
+
+export type FilmLibraryResolveResult = {
+  items: FilmLibraryResolveItem[]
+}
+
+/** Batch re-resolve readable URLs for canvas assetId caches (user-owned only). */
+export async function resolveFilmLibraryAssets(
+  assetIds: string[],
+  options?: { signal?: AbortSignal },
+) {
+  const ids = [
+    ...new Set(
+      assetIds
+        .map((id) => (typeof id === "string" ? id.trim() : ""))
+        .filter(Boolean),
+    ),
+  ]
+  if (ids.length === 0) return { items: [] as FilmLibraryResolveItem[] }
+  return backendFetch<FilmLibraryResolveResult>(
+    "/api/backend/internal/film/library/resolve",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ assetIds: ids }),
+      timeoutMs: 30_000,
+      signal: options?.signal,
+    },
+  )
+}
+

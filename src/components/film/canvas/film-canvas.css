@@ -1,0 +1,377 @@
+.chrome-bar {
+  background: color-mix(in oklab, #0c0b10 90%, transparent);
+  backdrop-filter: blur(18px);
+}
+
+.node-card {
+  overflow: hidden;
+  border-radius: 20px;
+  background: linear-gradient(175deg, rgb(24 27 38 / 94%) 0%, rgb(15 17 26 / 96%) 100%);
+  box-shadow:
+    0 20px 40px -15px rgb(0 0 0 / 70%),
+    0 0 0 1px rgb(255 255 255 / 7%),
+    inset 0 1px 1px 0 rgb(255 255 255 / 12%);
+  outline: 1px solid rgb(255 255 255 / 12%);
+}
+
+.node-card-neutral {
+  outline-color: rgb(255 255 255 / 12%);
+}
+
+.node-card-amber {
+  outline-color: rgb(245 158 11 / 38%);
+  box-shadow:
+    0 18px 45px -12px rgb(0 0 0 / 75%),
+    0 0 20px -3px rgb(245 158 11 / 15%),
+    inset 0 1px 1px 0 rgb(253 230 138 / 22%);
+}
+
+.node-card-cyan {
+  outline-color: rgb(6 182 212 / 32%);
+  box-shadow:
+    0 18px 45px -12px rgb(0 0 0 / 75%),
+    0 0 20px -3px rgb(6 182 212 / 12%),
+    inset 0 1px 1px 0 rgb(165 243 252 / 18%);
+}
+
+.node-card-emerald {
+  outline-color: rgb(16 185 129 / 28%);
+  box-shadow:
+    0 18px 45px -12px rgb(0 0 0 / 75%),
+    0 0 16px -3px rgb(16 185 129 / 12%),
+    inset 0 1px 1px 0 rgb(167 243 208 / 14%);
+}
+
+.node-card-rose {
+  outline-color: rgb(244 114 182 / 28%);
+  box-shadow:
+    0 18px 45px -12px rgb(0 0 0 / 75%),
+    0 0 16px -3px rgb(244 114 182 / 12%),
+    inset 0 1px 1px 0 rgb(251 207 232 / 14%);
+}
+
+.node-card-violet {
+  outline-color: rgb(167 139 250 / 28%);
+  box-shadow:
+    0 18px 45px -12px rgb(0 0 0 / 75%),
+    0 0 16px -3px rgb(167 139 250 / 12%),
+    inset 0 1px 1px 0 rgb(221 214 254 / 14%);
+}
+
+.node-card.is-selected:not(.node-card-agent) {
+  outline-color: rgb(245 158 11 / 55%);
+  box-shadow:
+    0 0 0 1px rgb(245 158 11 / 16%),
+    0 18px 40px rgb(0 0 0 / 45%);
+}
+
+.node-card-cyan.is-selected {
+  outline-color: rgb(6 182 212 / 55%);
+}
+
+.node-card-emerald.is-selected {
+  outline-color: rgb(16 185 129 / 50%);
+}
+
+.node-card-rose.is-selected {
+  outline-color: rgb(244 114 182 / 50%);
+}
+
+.node-card.is-selected .node-handle,
+.react-flow__node:hover .node-handle {
+  opacity: 1;
+}
+
+.react-flow__node {
+  overflow: visible;
+  font-size: 12px;
+}
+
+.react-flow__handle.node-handle {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #07080c;
+  background: #e8c27a;
+  opacity: 1;
+  transform-origin: center;
+  transition: transform 140ms ease, box-shadow 140ms ease;
+  box-shadow:
+    0 0 0 2px rgb(255 255 255 / 18%),
+    0 0 14px rgb(232 194 122 / 55%);
+}
+
+.react-flow__handle.node-handle::before {
+  content: "";
+  position: absolute;
+  inset: -14px;
+  border-radius: 999px;
+}
+
+.react-flow__handle.node-handle::after {
+  content: "";
+  position: absolute;
+  inset: -7px;
+  border-radius: 999px;
+  border: 1px solid rgb(255 255 255 / 22%);
+  animation: handle-glow 2.4s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.react-flow__handle.node-handle:hover,
+.react-flow__handle-connecting,
+.react-flow__handle-valid {
+  transform: scale(1.45);
+  box-shadow:
+    0 0 0 4px rgb(255 255 255 / 20%),
+    0 0 22px rgb(232 194 122 / 80%);
+}
+
+@keyframes handle-glow {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 0.75; }
+}
+
+.react-flow__node.is-drop-valid .node-card,
+.react-flow__node.is-drop-valid .node-icon > div:first-of-type,
+.react-flow__node.is-drop-valid .node-card-agent {
+  outline: 1px solid rgb(56 189 248 / 70%);
+  box-shadow: 0 0 0 3px rgb(56 189 248 / 18%), 0 0 28px rgb(56 189 248 / 22%);
+}
+
+.react-flow__node.is-drop-valid .node-handle {
+  transform: scale(1.45);
+  box-shadow:
+    0 0 0 4px rgb(56 189 248 / 28%),
+    0 0 22px rgb(56 189 248 / 55%);
+}
+
+.react-flow__node.is-drop-invalid {
+  opacity: 0.38;
+  transition: opacity 140ms ease;
+}
+
+.react-flow__node.is-drop-invalid .node-handle {
+  transform: none;
+  box-shadow: none;
+}
+
+.react-flow__edge-path {
+  stroke: #4a4338;
+}
+
+.react-flow__edge.selected .react-flow__edge-path,
+.react-flow__edge:focus .react-flow__edge-path {
+  stroke: #e8c27a;
+}
+
+.react-flow__attribution {
+  display: none !important;
+}
+
+.canvas-root .react-flow__controls {
+  display: none;
+}
+
+.canvas-root,
+.canvas-root.react-flow,
+.canvas-root .react-flow__renderer,
+.canvas-root .react-flow__pane,
+.canvas-root .react-flow__viewport,
+.canvas-root .react-flow__container,
+.canvas-root .react-flow__background {
+  background: transparent !important;
+}
+
+.canvas-root::before,
+.canvas-root::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+}
+
+.canvas-root::before {
+  background:
+    linear-gradient(to right, rgb(12 11 16 / 62%), transparent 14%, transparent 86%, rgb(12 11 16 / 62%)),
+    linear-gradient(to bottom, rgb(12 11 16 / 48%), transparent 12%, transparent 88%, rgb(12 11 16 / 48%));
+}
+
+.canvas-root::after {
+  background: radial-gradient(ellipse at 50% 46%, transparent 42%, rgb(0 0 0 / 42%) 100%);
+}
+
+.node-card-agent {
+  overflow: visible;
+  position: relative;
+  background: rgb(17 20 32 / 92%);
+  outline: 1px solid rgb(255 255 255 / 9%);
+  border-radius: 16px;
+  box-shadow:
+    0 16px 40px -10px rgb(0 0 0 / 70%),
+    0 0 0 1px rgb(255 255 255 / 6%);
+}
+
+.node-card-agent::before {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  z-index: 1;
+  height: 2px;
+  background: linear-gradient(to right, transparent, rgb(167 139 250 / 60%), transparent);
+}
+
+.node-card-agent.is-selected {
+  outline: 1px solid rgb(167 139 250 / 45%);
+  box-shadow:
+    0 0 0 1px rgb(167 139 250 / 16%),
+    0 18px 40px rgb(0 0 0 / 45%),
+    0 0 25px -4px rgb(167 139 250 / 25%);
+}
+
+.node-card-agent.is-running {
+  outline: 1px solid rgb(251 191 36 / 45%);
+}
+
+@keyframes agent-beam {
+  0%,
+  100% {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  50% {
+    transform: translateY(100%);
+    opacity: 0.8;
+  }
+}
+
+.agent-beam {
+  animation: agent-beam 2.5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-beam,
+  .react-flow__handle.node-handle::after {
+    animation: none;
+  }
+  .react-flow__handle.node-handle:hover,
+  .react-flow__handle-connecting,
+  .react-flow__handle-valid,
+  .react-flow__node.is-drop-valid .node-handle {
+    transform: none;
+  }
+}
+
+.react-flow__handle.node-handle-out,
+.react-flow__node:hover .node-handle-out,
+.node-card.is-selected .node-handle-out {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.react-flow__handle.node-handle-out::after {
+  display: none;
+}
+
+.react-flow__edge-path.edge-flow {
+  fill: none;
+  stroke: #6a5c42;
+  stroke-width: 1.2;
+  stroke-dasharray: 3 11;
+  animation: edge-dash 3s linear infinite;
+}
+
+.react-flow__edge-path.edge-flow.out {
+  stroke: #5a5568;
+  stroke-dasharray: 1 9;
+  animation-duration: 3.6s;
+}
+
+.react-flow__edge-path.edge-flow.selected,
+.react-flow__edge-path.edge-flow.running {
+  stroke-width: 1.55;
+  animation-duration: 0.95s;
+}
+
+.react-flow__edge-path.edge-glow {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 8;
+}
+
+.react-flow__edge-path.edge-glow.running,
+.react-flow__edge-path.edge-glow.selected {
+  stroke: #e8c27a;
+  stroke-opacity: 0.18;
+}
+
+.edge-dot {
+  filter: drop-shadow(0 0 6px rgb(232 194 122 / 70%));
+}
+
+@keyframes edge-dash {
+  to {
+    stroke-dashoffset: -28;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .react-flow__edge-path.edge-flow {
+    animation: none;
+  }
+}
+
+.react-flow__edge-textwrapper {
+  pointer-events: none;
+}
+
+
+.node-icon .node-handle {
+  opacity: 1;
+}
+
+/* 工具向 A：深灰平板 + 极弱径向；网格不跟星点混 */
+.canvas-root.canvas-tool::before {
+  background: none;
+}
+.canvas-root.canvas-tool::after {
+  background: radial-gradient(ellipse at 50% 42%, transparent 55%, rgb(0 0 0 / 18%) 100%);
+}
+.canvas-root.canvas-tool .react-flow__background {
+  opacity: 1;
+}
+
+/* 小图：略亮、视口框清晰、上移避底栏 */
+.canvas-root .react-flow__minimap.canvas-minimap,
+.canvas-root .react-flow__minimap {
+  bottom: 4.75rem !important;
+  right: 0.85rem !important;
+  width: 148px !important;
+  height: 104px !important;
+}
+.canvas-root .react-flow__minimap-mask {
+  fill: rgba(10, 12, 16, 0.5);
+  stroke: #d0d6de;
+  stroke-width: 2px;
+}
+.canvas-root .react-flow__minimap-node {
+  rx: 2;
+  ry: 2;
+  fill: #6b7582;
+  stroke: none;
+}
+
+@keyframes progress-hairline-slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+.progress-hairline {
+  animation: progress-hairline-slide 1.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .progress-hairline { animation: none; width: 100%; opacity: 0.5; }
+}
+.node-sticky {
+  transform: rotate(-0.6deg);
+}

@@ -35,6 +35,8 @@ export type FontSizeToken = "sm" | "md" | "lg"
 export interface MediaResult {
   url: string
   s3Key: string
+  /** Nest studio asset id when dual-written (film canvas text→image). */
+  assetId?: string
   mimeType: string
   width?: number
   height?: number

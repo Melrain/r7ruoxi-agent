@@ -91,3 +91,10 @@ export function executorSourceLabel(source?: ExecutorSource | null) {
 export function executorSourceLocalUnwiredLabel(feature = "出图") {
   return `本机${feature}未接线`
 }
+
+/** Canvas / analyze alias — same as resolveExecutorSourcePreference. */
+export function resolvePreferredExecutorSource(
+  fallback: ExecutorSource = DEFAULT_EXECUTOR_SOURCE,
+): ExecutorSource {
+  return resolveExecutorSourcePreference(fallback)
+}

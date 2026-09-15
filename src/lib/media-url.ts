@@ -51,3 +51,55 @@ export function reusePresignedUrl(
 export function resetPresignedUrlCache() {
   urlCache.clear()
 }
+
+import { resolveApiUrl } from "@/lib/api-base"
+
+function extractS3KeyLocal(url?: string | null): string | undefined {
+  if (!url?.trim()) return undefined
+  try {
+    const parsed = new URL(url, "https://r7ruoxi.com")
+    const key = parsed.searchParams.get("s3Key")?.trim()
+    return key || undefined
+  } catch {
+    return undefined
+  }
+}
+
+function isNestMediaUrlLocal(url: string): boolean {
+  const path = url.split("?")[0] ?? url
+  return (
+    path.includes("/internal/studio/file") ||
+    path.includes("/studio/file") ||
+    path.includes("/internal/media/")
+  )
+}
+
+function studioFileUrlLocal(s3Key: string): string {
+  return resolveApiUrl(`/internal/studio/file?s3Key=${encodeURIComponent(s3Key.trim())}`)
+}
+
+/** Browser-readable media URL (presigned or Nest studio file). Desktop isomorphic with web. */
+export function toBrowserMediaUrl(
+  url?: string | null,
+  s3Key?: string | null,
+): string | null {
+  const key = s3Key?.trim() || extractS3KeyLocal(url)
+  let next = url?.trim() || null
+  if (next?.startsWith("/internal/")) {
+    next = resolveApiUrl(next)
+  } else if (next?.startsWith("/api/backend/")) {
+    next = resolveApiUrl(next.slice("/api/backend".length) || "/")
+  }
+  if (key && (!next || !isNestMediaUrlLocal(next))) {
+    next = studioFileUrlLocal(key)
+  }
+  return next
+}
+
+export function withBrowserMediaUrl<
+  T extends { url?: string | null; s3Key?: string | null },
+>(item: T): T {
+  const url = toBrowserMediaUrl(item.url, item.s3Key)
+  return url && url !== item.url ? { ...item, url } : item
+}
+

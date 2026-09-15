@@ -2294,6 +2294,17 @@ select {
   background: #ffffff;
 }
 
+.workspace.film.film-canvas-entry {
+  display: flex;
+  flex-direction: column;
+  background: #14161c;
+}
+
+.film-canvas-fallback {
+  margin: 24px;
+  color: #a1a1aa;
+}
+
 .film-toolbar {
   display: flex;
   align-items: center;

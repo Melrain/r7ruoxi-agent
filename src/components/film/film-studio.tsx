@@ -30,13 +30,17 @@ import { FilmFollowPage } from "./film-follow-page"
 import { FilmGrokStatus } from "./film-grok-status"
 import { FilmProjectSwitcher } from "./film-project-switcher"
 
-const FilmCanvas = lazy(async () => {
-  const mod = await import("./film-canvas")
-  return { default: mod.FilmCanvas }
+const WorkspaceShell = lazy(async () => {
+  const mod = await import("./canvas/WorkspaceShell")
+  return { default: mod.WorkspaceShell }
 })
 
+/**
+ * Desktop film main entry — isomorphic with web `/video`:
+ * default = Melrain infinite canvas; classic StageRiver = secondary.
+ */
 export function FilmStudio() {
-  const [view, setView] = useState<"follow" | "canvas">("follow")
+  const [view, setView] = useState<"canvas" | "classic">("canvas")
   const [sourceEpoch, setSourceEpoch] = useState(0)
   const queryClient = useQueryClient()
 
@@ -74,7 +78,6 @@ export function FilmStudio() {
   )
   const ready = Boolean(currentFilmUserId())
   const setFilmVpsAnalyzing = useLiveEventsGate((state) => state.setFilmVpsAnalyzing)
-  // VPS 解析中才订 Nest SSE；本机 analyze 不订（断线仍靠 2s poll）
   useEffect(() => {
     setFilmVpsAnalyzing(ready && filmIsAnalyzing(project) && runnerSource === "vps")
     return () => setFilmVpsAnalyzing(false)
@@ -90,29 +93,30 @@ export function FilmStudio() {
     writeExecutorSourcePreference(next)
   }
 
+  if (view === "canvas") {
+    return (
+      <div className="workspace film film-canvas-entry">
+        <Suspense fallback={<p className="film-canvas-fallback">正在打开画布…</p>}>
+          <WorkspaceShell onOpenClassic={() => setView("classic")} />
+        </Suspense>
+        {error ? <p className="film-stage-error">{error}</p> : null}
+      </div>
+    )
+  }
+
   return (
     <div className="workspace film">
       <div className="film-toolbar">
         <FilmProjectSwitcher current={project} enabled />
         {hint ? <span className="film-phase">{hint}</span> : null}
         {busy ? <span className="film-phase-busy">进行中</span> : null}
-        {view === "follow" ? (
-          <span
-            className="ghost-btn compact film-view-toggle is-disabled"
-            title="本页只验证解析，画布暂未开放"
-            aria-disabled="true"
-          >
-            打开画布
-          </span>
-        ) : (
-          <button
-            type="button"
-            className="ghost-btn compact film-view-toggle"
-            onClick={() => setView("follow")}
-          >
-            返回跟拍
-          </button>
-        )}
+        <button
+          type="button"
+          className="ghost-btn compact film-view-toggle"
+          onClick={() => setView("canvas")}
+        >
+          打开画布
+        </button>
         <FilmGrokStatus
           preflight={grokStatus ? { ...grokStatus, source: runnerSource } : grokStatus}
           loading={preflight.isFetching}
@@ -125,33 +129,22 @@ export function FilmStudio() {
         />
       </div>
       <div className="film-stage">
-        {view === "canvas" ? (
-          <Suspense fallback={<p className="film-canvas-fallback">正在打开画布…</p>}>
-            <FilmCanvas
-              project={project}
-              canAnalyze={canAnalyze}
-              analyzeGateLabel={analyzeGateLabel}
-              refreshPreflight={refreshPreflight}
-            />
-          </Suspense>
-        ) : (
-          <FilmFollowPage
-            project={project}
-            canAnalyze={canAnalyze}
-            analyzeGateLabel={analyzeGateLabel}
-            grokStatus={grokStatus}
-            preflightLoading={preflight.isFetching}
-            preflightError={preflightError || undefined}
-            loginMessage={loginHint || undefined}
-            runnerSource={runnerSource}
-            sourceLocked={projectLocksSource}
-            onRunnerSourceChange={handleRunnerSourceChange}
-            onRecheck={() => {
-              void preflight.refetch()
-            }}
-            refreshPreflight={refreshPreflight}
-          />
-        )}
+        <FilmFollowPage
+          project={project}
+          canAnalyze={canAnalyze}
+          analyzeGateLabel={analyzeGateLabel}
+          grokStatus={grokStatus}
+          preflightLoading={preflight.isFetching}
+          preflightError={preflightError || undefined}
+          loginMessage={loginHint || undefined}
+          runnerSource={runnerSource}
+          sourceLocked={projectLocksSource}
+          onRunnerSourceChange={handleRunnerSourceChange}
+          onRecheck={() => {
+            void preflight.refetch()
+          }}
+          refreshPreflight={refreshPreflight}
+        />
         {error ? <p className="film-stage-error">{error}</p> : null}
       </div>
     </div>
