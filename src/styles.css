@@ -234,6 +234,15 @@ select {
   font-size: 12px;
 }
 
+.topbar-film {
+  min-height: 44px;
+  padding: 8px 20px;
+}
+
+.topbar-film p {
+  font-size: 11px;
+}
+
 .update-bar {
   display: flex;
   align-items: center;

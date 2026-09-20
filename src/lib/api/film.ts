@@ -133,10 +133,14 @@ function parseProject(value: unknown): FilmProject | null {
   }
 }
 
-function requireProject(value: unknown): FilmProject {
+export function requireProjectFromUnknown(value: unknown): FilmProject {
   const project = parseProject(value)
   if (!project) throw new Error("后端没有返回影片项目")
   return project
+}
+
+function requireProject(value: unknown): FilmProject {
+  return requireProjectFromUnknown(value)
 }
 
 function projectPath(projectId: string, suffix = "") {

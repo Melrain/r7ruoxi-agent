@@ -34,6 +34,11 @@ import {
   type VanityKind,
   type VanityRef,
 } from "@/lib/vanity-refs"
+import {
+  FILM_THREE_VIEW_LABELS,
+  FILM_THREE_VIEWS,
+  readMakeupLocked,
+} from "@/lib/film-makeup-gate"
 
 export function MakeupWorkspace() {
   const [executorSource, setExecutorSource] = useExecutorSource()
@@ -57,7 +62,13 @@ export function MakeupWorkspace() {
   const [picker, setPicker] = useState<VanityKind>()
   const [notice, setNotice] = useState<string>()
   const [preview, setPreview] = useState<LookCard | null>(null)
+  const [dismissedPending, setDismissedPending] = useState<string[]>([])
+  const [makeupLocked, setMakeupLocked] = useState(() => readMakeupLocked())
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    setMakeupLocked(readMakeupLocked())
+  }, [])
 
   useEffect(() => {
     hydrateRenderSettings()
@@ -69,7 +80,12 @@ export function MakeupWorkspace() {
 
   const hasPendingGenerate = Boolean(
     selectedId &&
-      looks.some((look) => look.status === "pending" && look.characterId === selectedId),
+      looks.some(
+        (look) =>
+          look.status === "pending" &&
+          look.characterId === selectedId &&
+          !dismissedPending.includes(look.id),
+      ),
   )
   const generateBusy =
     mutations.generate.isPending || mutations.retry.isPending || hasPendingGenerate
@@ -120,6 +136,10 @@ export function MakeupWorkspace() {
       setNotice(localUnwiredTip)
       return
     }
+    if (makeupLocked) {
+      setNotice("分镜已出，定妆已锁定")
+      return
+    }
     if (
       !selected ||
       !canGenerateVanityLook(liveDraft) ||
@@ -132,15 +152,13 @@ export function MakeupWorkspace() {
     try {
       await mutations.generate.mutateAsync({
         characterId: selected.id,
-        looks: [
-          {
-            dimension: "vanity",
-            chipId: vanityChipId(liveDraft),
-            chipTitle: vanityLookTitle(liveDraft),
-            refine: liveDraft.refine.trim(),
-            prompt: buildVanityPrompt(liveDraft),
-          },
-        ],
+        looks: FILM_THREE_VIEWS.map((view) => ({
+          dimension: "vanity",
+          chipId: `${vanityChipId(liveDraft)}:${view}`,
+          chipTitle: `${vanityLookTitle(liveDraft)} · ${FILM_THREE_VIEW_LABELS[view]}`,
+          refine: liveDraft.refine.trim(),
+          prompt: `${buildVanityPrompt(liveDraft)}，${FILM_THREE_VIEW_LABELS[view]}面三视图，白底，统一比例与灯光`,
+        })),
         settings: {
           quality: settings.quality,
           resolution: settings.resolution,
@@ -185,12 +203,14 @@ export function MakeupWorkspace() {
     }
   }
 
-  const generateLabel = generateBusy
+  const generateLabel = makeupLocked
+    ? "定妆已锁定"
+    : generateBusy
     ? "出图中…"
     : !selected
       ? "先选一张脸"
       : canGenerateVanityLook(liveDraft)
-        ? "出图"
+        ? "出三视"
         : "选出图参考"
 
   return (
@@ -202,8 +222,10 @@ export function MakeupWorkspace() {
               (localImageBlocked
                 ? localUnwiredTip
                 : generateBusy
-                  ? "正在出图…"
-                  : "选一张脸，再选妆造和服装参考后出图。")}
+                  ? "正在出三视…"
+                  : makeupLocked
+                    ? "分镜已出，定妆已锁定。"
+                    : "选一张脸，再选妆造和服装参考后出正/侧/背三视。")}
           </p>
           {notice ? (
             <button type="button" className="ghost-btn compact" onClick={() => setNotice(undefined)}>
@@ -251,12 +273,19 @@ export function MakeupWorkspace() {
             type="button"
             className="primary-btn"
             disabled={
+              makeupLocked ||
               localImageBlocked ||
               !selected ||
               !canGenerateVanityLook(liveDraft) ||
               generateBusy
             }
-            title={localImageBlocked ? localUnwiredTip : undefined}
+            title={
+              makeupLocked
+                ? "分镜已出，定妆已锁定"
+                : localImageBlocked
+                  ? localUnwiredTip
+                  : undefined
+            }
             onClick={() => void generate()}
           >
             {localImageBlocked ? localUnwiredTip : generateLabel}
@@ -408,7 +437,7 @@ export function MakeupWorkspace() {
                       <button type="button" className="makeup-text-btn" onClick={() => reuseLook(look)}>
                         复用
                       </button>
-                      {look.status === "failed" ? (
+                      {look.status === "failed" || look.status === "pending" ? (
                         <button
                           type="button"
                           className="makeup-text-btn"
@@ -420,10 +449,24 @@ export function MakeupWorkspace() {
                                 resolution: settings.resolution,
                                 model: settings.model,
                               },
-                            })
+                            }).catch((error) => setNotice(studioErrorMessage(error)))
                           }
                         >
                           重试
+                        </button>
+                      ) : null}
+                      {look.status === "pending" ? (
+                        <button
+                          type="button"
+                          className="makeup-text-btn"
+                          onClick={() => {
+                            setDismissedPending((current) =>
+                              current.includes(look.id) ? current : [...current, look.id],
+                            )
+                            void mutations.removeLook.mutateAsync(look.id).catch(() => undefined)
+                          }}
+                        >
+                          关闭卡住
                         </button>
                       ) : null}
                     </div>

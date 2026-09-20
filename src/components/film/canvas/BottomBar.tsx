@@ -93,8 +93,11 @@ export function BottomBar({
   const [plusOpen, setPlusOpen] = useState(false)
   const libraryOpen = useProjectStore((s) => s.assetLibraryOpen)
   const setLibraryOpen = useProjectStore((s) => s.setAssetLibraryOpen)
+  const setAssetLibraryMode = useProjectStore((s) => s.setAssetLibraryMode)
   const skillLibraryOpen = useProjectStore((s) => s.skillLibraryOpen)
   const setSkillLibraryOpen = useProjectStore((s) => s.setSkillLibraryOpen)
+  const runNext = useProjectStore((s) => s.runNext)
+  const fillDirectorSkeleton = useProjectStore((s) => s.fillDirectorSkeleton)
 
   return (
     <TooltipProvider delayDuration={280}>
@@ -136,6 +139,12 @@ export function BottomBar({
                       setPlusOpen(false)
                       return
                     }
+                    if (item.id === "history" || item.id === "remix") {
+                      setAssetLibraryMode("filmOnly")
+                      setLibraryOpen(true)
+                      setPlusOpen(false)
+                      return
+                    }
                     if (item.agentId) addAgent(item.agentId)
                     else if (item.kind) {
                       const id = addNode(item.kind)
@@ -155,6 +164,7 @@ export function BottomBar({
                   }}
                   onOpenLibrary={() => {
                     setPlusOpen(false)
+                    setAssetLibraryMode("library")
                     setLibraryOpen(true)
                   }}
                   onOpenSkillLibrary={() => {
@@ -176,6 +186,7 @@ export function BottomBar({
               data-testid="asset-library-trigger"
               onClick={() => {
                 setPlusOpen(false)
+                setAssetLibraryMode("library")
                 setLibraryOpen(true)
               }}
               className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[12px] text-zinc-200 hover:bg-white/6"
@@ -185,6 +196,30 @@ export function BottomBar({
             </button>
           </BarTip>
 
+          <BarTip label="下一步" shortcut="导演六环 run-next">
+            <button
+              type="button"
+              aria-label="下一步"
+              onClick={() => {
+                void runNext()
+              }}
+              className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[12px] text-zinc-200 hover:bg-white/6"
+            >
+              <Wand2 className="size-3.5 text-[#e8c27a]" />
+              下一步
+            </button>
+          </BarTip>
+          <BarTip label="补骨架" shortcut="导演六环空位">
+            <button
+              type="button"
+              aria-label="补骨架"
+              onClick={() => fillDirectorSkeleton()}
+              className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[12px] text-zinc-200 hover:bg-white/6"
+            >
+              <LayoutTemplate className="size-3.5 text-zinc-400" />
+              骨架
+            </button>
+          </BarTip>
           <BarTip label="Skill" shortcut="Skill 库 · 放到画布后连线装配">
             <button
               type="button"

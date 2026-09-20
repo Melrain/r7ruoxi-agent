@@ -117,6 +117,21 @@ export interface CanvasNodeData extends Record<string, unknown> {
   imageError?: string;
   /** Nest/R2 object key；配合 toBrowserMediaUrl 读预览。 */
   s3Key?: string;
+  /** 角色定妆三视（正/侧/背）；分镜门禁读此字段。 */
+  threeViews?: Partial<
+    Record<
+      "front" | "side" | "back",
+      {
+        url?: string;
+        s3Key?: string;
+        assetId?: string;
+        status?: NodeStatus;
+        error?: string;
+      }
+    >
+  >;
+  /** 本卡出图世代；abort stillMine 用。 */
+  imageRunId?: string;
 }
 
 export type AppNode = Node<CanvasNodeData, NodeKind>;
@@ -142,6 +157,8 @@ export interface ProjectDoc {
   credits: number;
   nodes: AppNode[];
   edges: AppEdge[];
+  /** 分镜已出后锁定定妆。 */
+  makeupLocked?: boolean;
 }
 
 export interface InferenceRequest {

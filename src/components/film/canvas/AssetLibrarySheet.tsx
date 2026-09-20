@@ -17,12 +17,13 @@ import {
   type AssetKind,
   type LibraryAsset,
 } from "@/lib/api/assets"
+import { filmOnlyListHint, filterFilmOnlyAssets } from "@/lib/film-domain"
 import { toBrowserMediaUrl } from "@/lib/media-url"
 import { cn } from "@/lib/utils"
 import { useProjectStore } from "@/components/film/canvas/store/project-store"
 import type { AssetKind as CanvasAssetKind } from "@/components/film/canvas/types/project"
 
-/** 与 /assets 一致：跨域只读选用。默认「全部」。 */
+/** 通用资产库可跨域只读。remix / 历史选用强制 filmOnly。 */
 const DOMAIN_TABS: { id: AssetDomainFilter; label: string }[] = [
   { id: "all", label: "全部" },
   { id: "film", label: "影片" },
@@ -212,6 +213,8 @@ export function AssetLibrarySheet({
   onOpenChange: (open: boolean) => void
 }) {
   const showToast = useProjectStore((s) => s.showToast)
+  const libraryMode = useProjectStore((s) => s.assetLibraryMode)
+  const filmOnly = libraryMode === "filmOnly"
   const [domain, setDomain] = useState<AssetDomainFilter>("all")
   const [kind, setKind] = useState<AssetKind>(DEFAULT_KIND)
   const [items, setItems] = useState<LibraryAsset[]>([])
@@ -244,14 +247,15 @@ export function AssetLibrarySheet({
       try {
         // 与 /assets 同源：listLibraryAssets → /internal/assets（Asset+Link）
         const page = await listLibraryAssets({
-          domain: opts.domain,
+          domain: filmOnly ? "film" : opts.domain,
           kind: opts.kind,
           cursor: opts.cursor,
           limit: 30,
           signal: opts.signal,
         })
         if (opts.signal?.aborted) return
-        setItems((prev) => (append ? [...prev, ...page.items] : page.items))
+        const rows = filmOnly ? filterFilmOnlyAssets(page.items) : page.items
+        setItems((prev) => (append ? [...prev, ...rows] : rows))
         setNextCursor(page.nextCursor)
       } catch (err) {
         if (opts.signal?.aborted) return
@@ -275,15 +279,16 @@ export function AssetLibrarySheet({
         }
       }
     },
-    [showToast],
+    [showToast, filmOnly],
   )
 
   useEffect(() => {
     if (!open) return
+    if (filmOnly && domain !== "film") setDomain("film")
     const ac = new AbortController()
-    void load({ domain, kind, signal: ac.signal })
+    void load({ domain: filmOnly ? "film" : domain, kind, signal: ac.signal })
     return () => ac.abort()
-  }, [open, domain, kind, load])
+  }, [open, domain, kind, load, filmOnly])
 
   const switchDomain = (next: AssetDomainFilter) => {
     if (next === domain) return
@@ -320,8 +325,10 @@ export function AssetLibrarySheet({
         <div className="flex items-center justify-between border-b border-white/6 px-3 py-2.5">
           <div className="flex items-center gap-1.5 text-[13px] text-zinc-200">
             <FolderOpen className="size-3.5 text-[#e8c27a]" />
-            资产库
-            <span className="text-[11px] text-zinc-600">{domainLabel}</span>
+            {filmOnly ? "影片历史" : "资产库"}
+            <span className="text-[11px] text-zinc-600">
+              {filmOnly ? filmOnlyListHint() : domainLabel}
+            </span>
           </div>
           <div className="flex items-center gap-1">
             <span
@@ -340,6 +347,7 @@ export function AssetLibrarySheet({
           </div>
         </div>
 
+        {filmOnly ? null : (
         <div className="flex gap-1 border-b border-white/6 px-2 py-1.5">
           {DOMAIN_TABS.map((tab) => (
             <button
@@ -357,6 +365,7 @@ export function AssetLibrarySheet({
             </button>
           ))}
         </div>
+        )}
 
         <div className="flex gap-1 border-b border-white/6 px-2 py-1.5">
           {KIND_TABS.map((tab) => (

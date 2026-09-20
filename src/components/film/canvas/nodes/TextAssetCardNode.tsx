@@ -19,6 +19,12 @@ import { PORT_COLOR } from "@/components/film/canvas/lib/port-color";
 import { cn } from "@/lib/utils";
 import { useProjectStore } from "@/components/film/canvas/store/project-store";
 import type { AppNode } from "@/components/film/canvas/types/project";
+import {
+  FILM_THREE_VIEW_LABELS,
+  FILM_THREE_VIEWS,
+  isCharacterAssetCard,
+  threeViewFilled,
+} from "@/lib/film-makeup-gate";
 
 const ROLE_BADGE: Record<TextAssetRole, string> = {
   character: "border-rose-500/30 bg-rose-500/10 text-rose-300",
@@ -62,6 +68,7 @@ function StickyImageSlot({
   data: AppNode["data"];
 }) {
   const generateStickyImage = useProjectStore((s) => s.generateStickyImage);
+  const dismissStickyImage = useProjectStore((s) => s.dismissStickyImage);
   const [broken, setBroken] = useState(false);
   const mediaSrc = resolveMediaSrc(data.assetUrl);
   const preview = mediaSrc && !broken ? mediaSrc : undefined;
@@ -91,6 +98,26 @@ function StickyImageSlot({
           <Loader2 className="size-2.5 animate-spin opacity-70" />
           出图中…
         </p>
+        <div className="flex items-center justify-end gap-1">
+          <button
+            type="button"
+            className="rounded-full px-1.5 py-0.5 text-[8px] text-[#7a6a4e] hover:bg-black/5"
+            onClick={(e) => {
+              e.stopPropagation();
+              dismissStickyImage(nodeId);
+            }}
+          >
+            关闭卡住
+          </button>
+          <button
+            type="button"
+            className="inline-flex items-center gap-0.5 rounded-full bg-[#3f3424]/90 px-1.5 py-0.5 text-[8px] text-[#efe6d2]"
+            onClick={run}
+          >
+            <RefreshCw className="size-2" />
+            重试
+          </button>
+        </div>
       </div>
     );
   }
@@ -238,6 +265,24 @@ export function TextAssetCardNode({ id, data, selected }: NodeProps<AppNode>) {
           )}
 
           <StickyImageSlot nodeId={id} data={data} />
+          {isCharacterAssetCard({ id, data } as AppNode) ? (
+            <div className="mt-1.5 flex gap-1">
+              {FILM_THREE_VIEWS.map((view) => (
+                <span
+                  key={view}
+                  className={cn(
+                    "rounded-full px-1.5 py-0.5 text-[8px]",
+                    threeViewFilled(data.threeViews?.[view])
+                      ? "bg-emerald-500/15 text-emerald-800"
+                      : "bg-[#d6c7a8]/40 text-[#7a6b52]",
+                  )}
+                >
+                  {FILM_THREE_VIEW_LABELS[view]}
+                  {threeViewFilled(data.threeViews?.[view]) ? "✓" : ""}
+                </span>
+              ))}
+            </div>
+          ) : null}
 
           {showHandoff ? (
             <div className="nodrag nowheel nopan relative mt-2 flex justify-end border-t border-[#d6c7a8]/50 pt-1.5">
