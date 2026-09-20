@@ -122,6 +122,12 @@ export function CanvasMenus() {
                   openCreateAgent({ flowX: addMenu.flowX, flowY: addMenu.flowY });
                   return;
                 }
+                if (item.id === "history" || item.id === "remix") {
+                  useProjectStore.getState().setAssetLibraryMode("filmOnly");
+                  setAssetLibraryOpen(true);
+                  closeAddMenu();
+                  return;
+                }
                 if (item.agentId) {
                   addAgent(item.agentId, {
                     position: { x: addMenu.flowX, y: addMenu.flowY },
@@ -139,6 +145,7 @@ export function CanvasMenus() {
               onStub={(item) => stubToast(item.label)}
               onOpenLibrary={() => {
                 closeAddMenu();
+                useProjectStore.getState().setAssetLibraryMode("library");
                 setAssetLibraryOpen(true);
               }}
               onOpenSkillLibrary={() => {

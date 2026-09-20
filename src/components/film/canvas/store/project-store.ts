@@ -39,20 +39,45 @@ import {
 } from "@/components/film/canvas/lib/nearest-handles";
 import { KIND_LABEL } from "@/components/film/canvas/lib/labels";
 import { findClearPosition, layoutGraph, nextFreePosition, sizeForKind } from "@/components/film/canvas/lib/layout";
-import { mockScriptFromPrompt, runInference, runRowJob } from "@/components/film/canvas/lib/mock/inference";
 import {
   analyzeCanvasVideoReference,
   mapCanvasAnalyzeError,
 } from "@/components/film/canvas/lib/canvas-analyze";
 import {
+  collectInboundVisionAssetIds,
+  scriptRowsFromBreakdown,
+} from "@/components/film/canvas/lib/canvas-write";
+import {
   extractTextAssetsFromScript,
   kindForTextAssetRole,
 } from "@/components/film/canvas/lib/extract-text-assets";
-import { studioErrorMessage } from "@/lib/api/client";
+import { isAbortError, studioErrorMessage, StudioApiError } from "@/lib/api/client";
+import {
+  requireFilmScriptBody,
+  storyboardRowsFromProject,
+  writeFilmScript,
+  writeFilmStoryboard,
+} from "@/lib/api/film-write";
 import { generateImage } from "@/lib/api/recruit";
 import { toBrowserMediaUrl } from "@/lib/media-url";
+import { createFilmRunToken, stillMine } from "@/lib/film-race";
+import {
+  FILM_DIRECTOR_SKELETON_AGENTS,
+  FILM_SIX_LOOP_LABELS,
+  missingDirectorSkeletonAgents,
+  nextFilmSixLoop,
+  type FilmSixLoopId,
+} from "@/lib/film-six-loop";
+import {
+  FILM_THREE_VIEW_LABELS,
+  FILM_THREE_VIEWS,
+  isCharacterAssetCard,
+  makeupLockedReason,
+  storyboardThreeViewGate,
+  writeMakeupLocked,
+  type FilmThreeViewId,
+} from "@/lib/film-makeup-gate";
 import { defaultModelId } from "@/components/film/canvas/lib/mock/models";
-import { fallbackPoster } from "@/components/film/canvas/lib/mock/assets";
 import {
   clearProject,
   createProjectMeta,
@@ -76,7 +101,6 @@ import type {
   NodeKind,
   ProjectDoc,
   ProjectMeta,
-  ScriptRow,
   ViewMode,
 } from "@/components/film/canvas/types/project";
 
@@ -115,6 +139,9 @@ export interface ProjectState extends ProjectDoc {
   connectingFromId: string | null;
   projectId: string | null;
   projectList: ProjectMeta[];
+  makeupLocked: boolean;
+  runEpoch: number;
+  assetLibraryMode: "library" | "filmOnly";
 }
 
 export interface ProjectActions {
@@ -171,6 +198,13 @@ export interface ProjectActions {
   runAgent: (agentNodeId: string) => Promise<void>;
   /** Abort in-flight run and clear running UI (parse/agent + emit nodes). */
   cancelAgentRun: (agentNodeId: string) => void;
+  /** 导演补六环骨架（缺的智能体/空产出卡）。 */
+  fillDirectorSkeleton: () => void;
+  /** 六环 run-next：只跑下一未完成环，不假装成功。 */
+  runNext: () => Promise<void>;
+  dismissStickyImage: (nodeId: string) => void;
+  cancelStickyImage: (nodeId: string) => void;
+  setAssetLibraryMode: (mode: "library" | "filmOnly") => void;
   addStarter: (card: StarterCard) => string;
   updateNodeData: (id: string, patch: Partial<CanvasNodeData>) => void;
   updateScriptRow: (
@@ -233,6 +267,7 @@ function toDoc(state: ProjectState): ProjectDoc {
     credits: state.credits,
     nodes: state.nodes,
     edges: state.edges,
+    makeupLocked: state.makeupLocked,
   };
 }
 
@@ -270,6 +305,9 @@ function uiDefaults(): Pick<
   | "connectingFromId"
   | "projectId"
   | "projectList"
+  | "makeupLocked"
+  | "runEpoch"
+  | "assetLibraryMode"
 > {
   return {
     viewMode: "workflow",
@@ -304,6 +342,9 @@ function uiDefaults(): Pick<
     connectingFromId: null,
     projectId: null,
     projectList: [],
+    makeupLocked: false,
+    runEpoch: 0,
+    assetLibraryMode: "library",
   };
 }
 
@@ -323,32 +364,82 @@ let persistTimer: ReturnType<typeof setTimeout> | undefined;
 
 /** In-flight parse/agent AbortControllers — cancel clears FE running + aborts fetch. */
 const agentRunAbortById = new Map<string, AbortController>();
+const imageRunAbortById = new Map<string, AbortController>();
 
-function clearStaleRunningNodes<T extends { data: { status?: string; errorMessage?: string } }>(
-  nodes: T[],
-): T[] {
-  return nodes.map((n) =>
-    n.data.status === "running" || n.data.status === "uploading"
-      ? {
-          ...n,
-          data: {
-            ...n.data,
-            status: "idle" as const,
-            progress: undefined,
-            errorMessage:
-              n.data.status === "running"
-                ? "上次生成中断（刷新或超时后状态卡住），请重试"
-                : n.data.errorMessage,
-          },
+function abortAllInFlightRuns() {
+  for (const ac of agentRunAbortById.values()) ac.abort();
+  agentRunAbortById.clear();
+  for (const ac of imageRunAbortById.values()) ac.abort();
+  imageRunAbortById.clear();
+}
+
+function clearStaleRunningNodes<T extends {
+  data: {
+    status?: string;
+    errorMessage?: string;
+    imageStatus?: string;
+    imageError?: string;
+    imageRunId?: string;
+    threeViews?: AppNode["data"]["threeViews"];
+  };
+}>(nodes: T[]): T[] {
+  return nodes.map((n) => {
+    const staleNode = n.data.status === "running" || n.data.status === "uploading";
+    const staleImage = n.data.imageStatus === "running";
+    const views = n.data.threeViews;
+    let nextViews = views;
+    if (views) {
+      nextViews = { ...views };
+      for (const key of FILM_THREE_VIEWS) {
+        if (nextViews[key]?.status === "running") {
+          nextViews[key] = {
+            ...nextViews[key],
+            status: "idle",
+            error: "上次出图中断，可重试",
+          };
         }
-      : n,
-  );
+      }
+    }
+    if (!staleNode && !staleImage && nextViews === views) return n;
+    return {
+      ...n,
+      data: {
+        ...n.data,
+        ...(staleNode
+          ? {
+              status: "idle" as const,
+              progress: undefined,
+              errorMessage:
+                n.data.status === "running"
+                  ? "上次生成中断（刷新或超时后状态卡住），请重试"
+                  : n.data.errorMessage,
+            }
+          : {}),
+        ...(staleImage
+          ? {
+              imageStatus: "idle" as const,
+              imageError: "上次出图中断（刷新或超时后状态卡住），可关闭或重试",
+              imageRunId: undefined,
+            }
+          : {}),
+        ...(nextViews !== views ? { threeViews: nextViews } : {}),
+      },
+    };
+  });
 }
 
-
-function sleepMs(ms: number) {
-  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+function resolveCanvasNestProjectId(nodes: AppNode[]): string | undefined {
+  for (const node of nodes) {
+    const id = node.data.filmProjectId?.trim();
+    if (id) return id;
+  }
+  return undefined;
 }
+
+function failClosedMessage(label: string) {
+  return `${label}后端尚未接线，无法假装成功`;
+}
+
 
 function connect(
   source: string,
@@ -437,6 +528,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
     ...uiDefaults(),
 
     hydrateFromStorage: () => {
+      abortAllInFlightRuns();
       const lib = ensureProjectLibrary(createEmptyDoc());
       const graph = normalizeGraph(lib.doc.nodes, lib.doc.edges);
       const nodes = clearStaleRunningNodes(graph.nodes);
@@ -448,6 +540,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
         credits: lib.doc.credits,
         nodes,
         edges: graph.edges,
+        makeupLocked: Boolean(lib.doc.makeupLocked),
+        runEpoch: get().runEpoch + 1,
       });
     },
 
@@ -486,6 +580,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
         nodes: [],
         edges: [],
       };
+      abortAllInFlightRuns();
       saveProjectDoc(meta.id, empty, meta.title);
       set({
         ...uiDefaults(),
@@ -496,6 +591,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
         credits: state.credits,
         nodes: [],
         edges: [],
+        makeupLocked: false,
+        runEpoch: state.runEpoch + 1,
         fitViewToken: state.fitViewToken + 1,
       });
       get().showToast("已新建空画布");
@@ -529,6 +626,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
       const graph = normalizeGraph(doc.nodes, doc.edges);
       const nodes = clearStaleRunningNodes(graph.nodes);
       // touch current + recent ordering
+      abortAllInFlightRuns();
       saveProjectDoc(id, doc, doc.workspaceTitle);
       set({
         ...uiDefaults(),
@@ -539,6 +637,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
         credits: doc.credits,
         nodes,
         edges: graph.edges,
+        makeupLocked: Boolean(doc.makeupLocked),
+        runEpoch: state.runEpoch + 1,
         fitViewToken: state.fitViewToken + 1,
       });
     },
@@ -573,6 +673,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
         get().createEmptyProject();
         return;
       }
+      abortAllInFlightRuns();
       const graph = normalizeGraph(doc.nodes, doc.edges);
       set({
         ...uiDefaults(),
@@ -583,6 +684,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
         credits: doc.credits,
         nodes: graph.nodes,
         edges: graph.edges,
+        makeupLocked: Boolean(doc.makeupLocked),
+        runEpoch: get().runEpoch + 1,
         fitViewToken: get().fitViewToken + 1,
       });
       get().showToast("已删除项目");
@@ -801,6 +904,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
         edges: addEdge(
           {
             ...nextConnection,
+            id: `e_${connection.source}_${connection.target}_${uid("e")}`,
             type: "default",
             data: { edgeKind: "in" as const },
           },
@@ -1055,6 +1159,165 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
       get().showToast("已取消生成", { durationMs: 2400 });
     },
 
+    fillDirectorSkeleton: () => {
+      const missing = missingDirectorSkeletonAgents(get().nodes);
+      if (missing.length === 0) return;
+      const rightmost = get().nodes.reduce(
+        (max, n) => Math.max(max, n.position.x),
+        80,
+      );
+      const baseY =
+        get().nodes.find((n) => isAgentNode(n) && n.data.agentId === "parse")
+          ?.position.y ?? 80;
+      let offset = 0;
+      for (const agentId of FILM_DIRECTOR_SKELETON_AGENTS) {
+        if (!missing.includes(agentId)) continue;
+        get().addAgent(agentId, {
+          position: { x: rightmost + 280 + offset * 240, y: baseY + offset * 40 },
+          select: false,
+          history: false,
+        });
+        offset += 1;
+      }
+      const byAgent = (id: string) =>
+        get().nodes.find((n) => isAgentNode(n) && n.data.agentId === id);
+      const outOf = (agentId: string, kind?: string) => {
+        const agent = byAgent(agentId);
+        if (!agent) return undefined;
+        for (const edge of get().edges) {
+          if (edge.source !== agent.id || edge.data?.edgeKind !== "out") continue;
+          const tgt = get().nodes.find((n) => n.id === edge.target);
+          if (!tgt) continue;
+          if (kind && tgt.data.kind !== kind) continue;
+          return tgt;
+        }
+        return undefined;
+      };
+      const ensureLink = (fromId: string, toId: string) => {
+        if (get().edges.some((e) => e.source === fromId && e.target === toId)) return;
+        const from = get().nodes.find((n) => n.id === fromId);
+        const to = get().nodes.find((n) => n.id === toId);
+        if (!from || !to) return;
+        set({
+          edges: addEdge(connect(fromId, toId, "in", nearestSideHandles(from, to, "asset")), get().edges),
+        });
+      };
+      const parseOut = outOf("parse");
+      const script = byAgent("script");
+      if (parseOut && script) ensureLink(parseOut.id, script.id);
+      const scriptOut = outOf("script", "script");
+      const storyboard = byAgent("storyboard");
+      if (scriptOut && storyboard) ensureLink(scriptOut.id, storyboard.id);
+      const storyboardOut = outOf("storyboard", "storyboard");
+      const image = byAgent("image");
+      const video = byAgent("video");
+      if (storyboardOut && image) ensureLink(storyboardOut.id, image.id);
+      if (storyboardOut && video) ensureLink(storyboardOut.id, video.id);
+      get().showToast(`已补导演骨架：${missing.map((id) => FILM_SIX_LOOP_LABELS[id === "parse" ? "parse" : id === "script" ? "script" : id === "storyboard" ? "storyboard" : id === "image" ? "image" : "video"]).join("、")}`);
+    },
+
+    runNext: async () => {
+      const loop = nextFilmSixLoop(get().nodes, get().edges) as FilmSixLoopId | null;
+      if (!loop) {
+        get().showToast("六环已齐");
+        return;
+      }
+      if (loop === "parse" || loop === "script" || loop === "storyboard") {
+        const agent = get().nodes.find((n) => isAgentNode(n) && n.data.agentId === loop);
+        if (!agent) {
+          get().fillDirectorSkeleton();
+          const again = get().nodes.find((n) => isAgentNode(n) && n.data.agentId === loop);
+          if (!again) {
+            get().showToast(`缺少${FILM_SIX_LOOP_LABELS[loop]}智能体`);
+            return;
+          }
+          await get().runAgent(again.id);
+          return;
+        }
+        if (agent.data.status === "running") return;
+        await get().runAgent(agent.id);
+        return;
+      }
+      if (loop === "assets") {
+        const scriptOut = get().nodes.find(
+          (n) => n.data.kind === "script" && (n.data.text || "").trim(),
+        );
+        const scriptText = scriptOut?.data.text?.trim() ?? "";
+        if (!scriptText) {
+          get().showToast("没有剧本文本，无法挂资产");
+          return;
+        }
+        const scriptAgent = get().nodes.find((n) => isAgentNode(n) && n.data.agentId === "script");
+        const assets = extractTextAssetsFromScript(scriptText);
+        if (assets.length === 0) {
+          get().showToast("未抽出文字资产（文中无明确角色/场景/道具）", { durationMs: 3600 });
+          return;
+        }
+        const baseX = (scriptOut?.position.x ?? 0) + 360;
+        const baseY = scriptOut?.position.y ?? 0;
+        let hung = 0;
+        for (let i = 0; i < assets.length; i++) {
+          const item = assets[i]!;
+          const kind = kindForTextAssetRole(item.role);
+          const assetId = get().addNode(kind, {
+            position: {
+              x: baseX + (i % 3) * 220,
+              y: baseY + Math.floor(i / 3) * 240,
+            },
+            select: false,
+            history: false,
+            data: {
+              role: "asset",
+              label: item.title,
+              status: "success",
+              text: item.description,
+              assetRole: item.role,
+              textAssetCard: true,
+            },
+          });
+          if (scriptAgent) {
+            set({
+              edges: addEdge(connect(scriptAgent.id, assetId, "out"), get().edges),
+            });
+          }
+          hung += 1;
+        }
+        get().showToast(`已挂 ${hung} 张文字资产 · 角色请出三视后再写分镜`, { durationMs: 3600 });
+        return;
+      }
+      get().showToast(failClosedMessage(FILM_SIX_LOOP_LABELS[loop]), { durationMs: 5600 });
+    },
+
+    dismissStickyImage: (nodeId) => {
+      imageRunAbortById.get(nodeId)?.abort();
+      imageRunAbortById.delete(nodeId);
+      const node = get().nodes.find((n) => n.id === nodeId);
+      if (!node) return;
+      const views = node.data.threeViews;
+      let nextViews = views;
+      if (views) {
+        nextViews = { ...views };
+        for (const key of FILM_THREE_VIEWS) {
+          if (nextViews[key]?.status === "running") {
+            nextViews[key] = { ...nextViews[key], status: "idle", error: undefined };
+          }
+        }
+      }
+      get().updateNodeData(nodeId, {
+        imageStatus: "idle",
+        imageError: undefined,
+        imageRunId: undefined,
+        ...(nextViews ? { threeViews: nextViews } : {}),
+      });
+      get().showToast("已关闭卡住的出图中", { durationMs: 2400 });
+    },
+
+    cancelStickyImage: (nodeId) => {
+      get().dismissStickyImage(nodeId);
+    },
+
+    setAssetLibraryMode: (mode) => set({ assetLibraryMode: mode }),
+
     runAgent: async (agentNodeId) => {
       const agent = get().nodes.find((n) => n.id === agentNodeId);
       const spec = specOf(agent);
@@ -1216,6 +1479,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
 
         const outId = ensureParseOut();
         const runAc = new AbortController();
+        const epoch = get().runEpoch;
+        const token = createFilmRunToken(get().projectId ?? "", agentNodeId);
+        const mine = () =>
+          stillMine(token, {
+            projectId: get().projectId,
+            runId: token.runId,
+            aborted: runAc.signal.aborted || get().runEpoch !== epoch,
+          });
         agentRunAbortById.get(agentNodeId)?.abort();
         agentRunAbortById.set(agentNodeId, runAc);
         try {
@@ -1237,6 +1508,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
               signal: runAc.signal,
             },
           );
+          if (!mine()) return;
           const { text, scriptRows } = analyzed;
           get().updateNodeData(outId, {
             label: "拆解",
@@ -1249,206 +1521,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
             status: "success",
             errorMessage: undefined,
           });
+          get().fillDirectorSkeleton();
           get().showToast("解析完成 · 正在写剧本", { durationMs: 3000 });
-
-          // —— 第3刀：无感续写剧本 + 挂文字资产（勿弹交给）——
-          const parseAgent = get().nodes.find((n) => n.id === agentNodeId);
-          const breakdownNode = get().nodes.find((n) => n.id === outId);
-          if (!parseAgent || !breakdownNode) return;
-
-          // Ensure / create 「生成剧本」智能体，并挂上拆解 → script
-          let scriptAgentId: string | undefined;
-          for (const edge of get().edges) {
-            if (edge.source !== outId) continue;
-            if (edge.data?.edgeKind === "out") continue;
-            const tgt = get().nodes.find((n) => n.id === edge.target);
-            if (tgt && isAgentNode(tgt) && tgt.data.agentId === "script") {
-              scriptAgentId = tgt.id;
-              break;
-            }
-          }
-          if (!scriptAgentId) {
-            scriptAgentId = get().addAgent("script", {
-              position: {
-                x: breakdownNode.position.x + 360,
-                y: breakdownNode.position.y,
-              },
-              select: false,
-              history: false,
-            });
-            set({
-              edges: addEdge(connect(outId, scriptAgentId, "in"), get().edges),
-            });
-          }
-
-          get().updateNodeData(scriptAgentId, {
-            status: "running",
-            errorMessage: undefined,
-          });
-
-          const ensureScriptOut = (): string => {
-            const scriptAgent = get().nodes.find((n) => n.id === scriptAgentId);
-            const existingScriptOut = get().edges.find((e) => {
-              if (e.source !== scriptAgentId || e.data?.edgeKind !== "out") return false;
-              const tgt = get().nodes.find((n) => n.id === e.target);
-              return tgt?.data.kind === "script";
-            });
-            let scriptOutId = existingScriptOut?.target;
-            if (!scriptOutId || !get().nodes.some((n) => n.id === scriptOutId)) {
-              scriptOutId = get().addNode("script", {
-                position: {
-                  x: (scriptAgent?.position.x ?? breakdownNode.position.x + 360) + 320,
-                  y: scriptAgent?.position.y ?? breakdownNode.position.y,
-                },
-                select: false,
-                history: false,
-                data: {
-                  role: "asset",
-                  label: "剧本",
-                  status: "running",
-                  text: "",
-                },
-              });
-              set({
-                edges: addEdge(
-                  connect(scriptAgentId!, scriptOutId, "out"),
-                  get().edges,
-                ),
-              });
-            } else {
-              get().updateNodeData(scriptOutId, {
-                label: "剧本",
-                status: "running",
-                errorMessage: undefined,
-              });
-            }
-            return scriptOutId;
-          };
-
-          const scriptOutId = ensureScriptOut();
-
-          try {
-            await sleepMs(420);
-            const nest = analyzed.script;
-            const usedNest = Boolean(nest?.body?.trim());
-            const body = nest?.body?.trim()
-              ? nest.body.trim()
-              : mockScriptFromPrompt(text || "拆解");
-            const title =
-              (nest?.title?.trim() || "") ||
-              body.split("\n").map((l) => l.trim()).find((l) => l.startsWith("《")) ||
-              "剧本";
-            const scriptText = body.includes(title) ? body : `${title}\n${body}`;
-
-            get().updateNodeData(scriptOutId, {
-              label: title.replace(/[《》]/g, "").slice(0, 24) || "剧本",
-              status: "success",
-              text: scriptText,
-              errorMessage: undefined,
-            });
-            get().updateNodeData(scriptAgentId, {
-              status: "success",
-              errorMessage: undefined,
-            });
-            get().showToast(
-              usedNest
-                ? "剧本就绪 · 正在挂资产"
-                : "剧本就绪（mock 兜底）· 正在挂资产",
-              { durationMs: 3000 },
-            );
-
-            // 抽文字资产：勿假数据
-            try {
-              const assets = extractTextAssetsFromScript(scriptText);
-              if (assets.length === 0) {
-                get().showToast("未抽出文字资产（文中无明确角色/场景/道具）", {
-                  durationMs: 3600,
-                });
-                return;
-              }
-
-              const scriptNode = get().nodes.find((n) => n.id === scriptOutId);
-              const baseX =
-                (scriptNode?.position.x ?? breakdownNode.position.x) + 360;
-              const baseY = scriptNode?.position.y ?? breakdownNode.position.y;
-
-              // 清掉本 script agent 先前挂的文字资产出边（重跑不堆）
-              const staleAssetIds: string[] = [];
-              for (const edge of get().edges) {
-                if (edge.source !== scriptAgentId || edge.data?.edgeKind !== "out") continue;
-                const tgt = get().nodes.find((n) => n.id === edge.target);
-                if (!tgt) continue;
-                if (tgt.data.kind === "script") continue;
-                if (tgt.data.textAssetCard || tgt.data.assetRole) {
-                  staleAssetIds.push(tgt.id);
-                }
-              }
-              if (staleAssetIds.length) {
-                const drop = new Set(staleAssetIds);
-                set({
-                  nodes: get().nodes.filter((n) => !drop.has(n.id)),
-                  edges: get().edges.filter(
-                    (e) => !drop.has(e.source) && !drop.has(e.target),
-                  ),
-                });
-              }
-
-              let hung = 0;
-              for (let i = 0; i < assets.length; i++) {
-                const item = assets[i]!;
-                const kind = kindForTextAssetRole(item.role);
-                const assetId = get().addNode(kind, {
-                  position: {
-                    x: baseX + (i % 3) * 220,
-                    y: baseY + Math.floor(i / 3) * 240,
-                  },
-                  select: false,
-                  history: false,
-                  data: {
-                    role: "asset",
-                    label: item.title,
-                    status: "success",
-                    text: item.description,
-                    assetRole: item.role,
-                    textAssetCard: true,
-                  },
-                });
-                set({
-                  edges: addEdge(
-                    connect(scriptAgentId!, assetId, "out"),
-                    get().edges,
-                  ),
-                });
-                hung += 1;
-                if (i < assets.length - 1) await sleepMs(160);
-              }
-              get().showToast(`已挂 ${hung} 张文字资产`, { durationMs: 3000 });
-            } catch (assetCaught) {
-              const msg =
-                assetCaught instanceof Error && assetCaught.message.trim()
-                  ? assetCaught.message.trim()
-                  : "挂文字资产失败";
-              get().showToast(msg, { durationMs: 5600 });
-              // 停在资产步：剧本已成功，不假成功下游
-            }
-          } catch (scriptCaught) {
-            const msg =
-              scriptCaught instanceof Error && scriptCaught.message.trim()
-                ? scriptCaught.message.trim()
-                : "写剧本失败，可从拆解后重跑";
-            get().updateNodeData(scriptOutId, {
-              status: "error",
-              errorMessage: msg,
-            });
-            get().updateNodeData(scriptAgentId, {
-              status: "error",
-              errorMessage: msg,
-            });
-            get().showToast(msg, { durationMs: 5600 });
-            // 停在剧本步，不继续挂资产
-          }
+          await get().runNext();
         } catch (caught) {
-          if (runAc.signal.aborted) {
+          if (!mine() || runAc.signal.aborted || isAbortError(caught)) {
+            if (!mine()) return;
             get().updateNodeData(outId, {
               label: "拆解",
               status: "idle",
@@ -1464,7 +1542,6 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
               label: "拆解",
               status: "error",
               errorMessage: msg,
-              // Keep prior rows if any; do not invent fake shots.
             });
             failParse(msg);
           }
@@ -1476,74 +1553,39 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
         return;
       }
 
-      pushHistory();
       const prompt = composeEffectiveRunPrompt(
         spec,
         agent.data.promptOverride,
         valuesByKind,
         inboundTexts.join("\n") || spec.label
       );
+      const runAc = new AbortController();
+      const epoch = get().runEpoch;
+      const token = createFilmRunToken(get().projectId ?? "", agentNodeId);
+      const mine = () =>
+        stillMine(token, {
+          projectId: get().projectId,
+          runId: token.runId,
+          aborted: runAc.signal.aborted || get().runEpoch !== epoch,
+        });
+      agentRunAbortById.get(agentNodeId)?.abort();
+      agentRunAbortById.set(agentNodeId, runAc);
+      pushHistory();
       get().updateNodeData(agentNodeId, {
         status: "running",
         errorMessage: undefined,
         prompt,
       });
-      try {
-        const result = await runInference({
-          nodeId: agentNodeId,
-          kind: spec.emits,
-          prompt,
-          model: agent.data.model,
-        });
-        const text =
-          spec.emits === "script" ||
-          spec.emits === "scene" ||
-          spec.emits === "character"
-            ? mockScriptFromPrompt(prompt)
-            : result.text;
-        const scriptRows: ScriptRow[] | undefined =
-          spec.emits === "storyboard"
-            ? [
-                {
-                  id: "row_s01",
-                  shotId: "S01",
-                  duration: "3s",
-                  visualDesc: "开场钩子，近景",
-                  dialogue: "就这一笔。",
-                  selected: true,
-                  rowStatus: "success",
-                },
-                {
-                  id: "row_s02",
-                  shotId: "S02",
-                  duration: "4s",
-                  visualDesc: "转入新世界",
-                  dialogue: "（鼓点）",
-                  selected: true,
-                  rowStatus: "success",
-                },
-                {
-                  id: "row_s03",
-                  shotId: "S03",
-                  duration: "5s",
-                  visualDesc: prompt.slice(0, 24) || "高潮镜头",
-                  dialogue: "这一笔，改写山河。",
-                  selected: true,
-                  rowStatus: "success",
-                },
-              ]
-            : result.scriptRows;
-        const assetUrl =
-          spec.emits === "image" || spec.emits === "video" || spec.emits === "audio"
-            ? result.assetUrl ?? fallbackPoster(spec.emits, prompt)
-            : result.assetUrl;
 
-        const existingOut = get().edges.find(
-          (e) => e.source === agentNodeId && e.data?.edgeKind === "out"
-        );
+      const ensureOut = (kind: typeof spec.emits, label: string) => {
+        const existingOut = get().edges.find((e) => {
+          if (e.source !== agentNodeId || e.data?.edgeKind !== "out") return false;
+          const tgt = get().nodes.find((n) => n.id === e.target);
+          return tgt?.data.kind === kind;
+        });
         let outId = existingOut?.target;
         if (!outId || !get().nodes.some((n) => n.id === outId)) {
-          outId = get().addNode(spec.emits, {
+          outId = get().addNode(kind, {
             position: {
               x: agent.position.x + 320,
               y: agent.position.y,
@@ -1552,12 +1594,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
             history: false,
             data: {
               role: "asset",
-              label: KIND_LABEL[spec.emits],
-              status: "success",
-              text: text ?? "",
+              label,
+              status: "running",
+              text: "",
               prompt,
-              assetUrl,
-              scriptRows,
             },
           });
           set({
@@ -1565,21 +1605,124 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
           });
         } else {
           get().updateNodeData(outId, {
-            status: "success",
-            text: text ?? "",
-            prompt,
-            assetUrl,
-            scriptRows,
+            label,
+            status: "running",
             errorMessage: undefined,
+            prompt,
           });
         }
-        get().updateNodeData(agentNodeId, { status: "success" });
-        get().showToast(`${spec.label}已出${KIND_LABEL[spec.emits]}`);
-      } catch {
-        get().updateNodeData(agentNodeId, {
-          status: "error",
-          errorMessage: "演示推理中断，请重试",
-        });
+        return outId;
+      };
+
+      const failAgent = (outId: string | undefined, msg: string) => {
+        if (outId) {
+          get().updateNodeData(outId, { status: "error", errorMessage: msg });
+        }
+        get().updateNodeData(agentNodeId, { status: "error", errorMessage: msg });
+        get().showToast(msg, { durationMs: 5600 });
+      };
+
+      try {
+        if (spec.id === "script") {
+          const outId = ensureOut("script", "剧本");
+          const nestProjectId = resolveCanvasNestProjectId(get().nodes);
+          if (!nestProjectId) {
+            failAgent(outId, "画布没有关联影片项目，无法写剧本");
+            return;
+          }
+          const inboundIds = get()
+            .edges.filter((e) => e.target === agentNodeId && e.data?.edgeKind !== "out")
+            .map((e) => e.source);
+          const equipped = resolveEquippedSkill(agentNodeId, get().nodes, get().edges);
+          const written = await writeFilmScript(
+            nestProjectId,
+            {
+              skillId: equipped?.skillId ?? agent.data.skillId,
+              promptSupplement: agent.data.promptSupplement,
+              visionAssetIds: collectInboundVisionAssetIds(get().nodes, inboundIds),
+            },
+            { signal: runAc.signal },
+          );
+          if (!mine()) return;
+          const script = requireFilmScriptBody(written);
+          const title = script.title.replace(/[《》]/g, "").slice(0, 24) || "剧本";
+          const scriptText = script.body.includes(script.title)
+            ? script.body
+            : `${script.title}\n${script.body}`;
+          get().updateNodeData(outId, {
+            label: title,
+            status: "success",
+            text: scriptText,
+            errorMessage: undefined,
+          });
+          get().updateNodeData(agentNodeId, { status: "success", errorMessage: undefined });
+          get().showToast("剧本就绪 · 可挂资产或跑下一步", { durationMs: 3000 });
+          return;
+        }
+
+        if (spec.id === "storyboard") {
+          const gate = storyboardThreeViewGate(get().nodes);
+          if (!gate.ok) {
+            get().updateNodeData(agentNodeId, {
+              status: "error",
+              errorMessage: gate.reason,
+            });
+            get().showToast(gate.reason, { durationMs: 5600 });
+            return;
+          }
+          const outId = ensureOut("storyboard", "分镜");
+          const nestProjectId = resolveCanvasNestProjectId(get().nodes);
+          if (!nestProjectId) {
+            failAgent(outId, "画布没有关联影片项目，无法写分镜");
+            return;
+          }
+          const equipped = resolveEquippedSkill(agentNodeId, get().nodes, get().edges);
+          const written = await writeFilmStoryboard(
+            nestProjectId,
+            {
+              skillId: equipped?.skillId ?? agent.data.skillId,
+              promptSupplement: agent.data.promptSupplement,
+            },
+            { signal: runAc.signal },
+          );
+          if (!mine()) return;
+          const rows = scriptRowsFromBreakdown(storyboardRowsFromProject(written));
+          get().updateNodeData(outId, {
+            label: "分镜",
+            status: "success",
+            scriptRows: rows,
+            errorMessage: undefined,
+          });
+          get().updateNodeData(agentNodeId, { status: "success", errorMessage: undefined });
+          set({ makeupLocked: true });
+          writeMakeupLocked(true);
+          get().showToast("分镜已出 · 定妆已锁定", { durationMs: 3600 });
+          return;
+        }
+
+        const msg = failClosedMessage(spec.label);
+        get().updateNodeData(agentNodeId, { status: "error", errorMessage: msg });
+        get().showToast(msg, { durationMs: 5600 });
+      } catch (caught) {
+        if (!mine() || runAc.signal.aborted || isAbortError(caught)) {
+          if (mine()) {
+            get().updateNodeData(agentNodeId, {
+              status: "idle",
+              errorMessage: undefined,
+            });
+          }
+          return;
+        }
+        const msg =
+          caught instanceof StudioApiError
+            ? caught.message
+            : studioErrorMessage(caught) || `${spec.label}失败`;
+        get().updateNodeData(agentNodeId, { status: "error", errorMessage: msg });
+        get().showToast(msg, { durationMs: 5600 });
+      } finally {
+        if (agentRunAbortById.get(agentNodeId) === runAc) {
+          agentRunAbortById.delete(agentNodeId);
+        }
       }
     },
 
@@ -1623,175 +1766,146 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
 
     generateNode: async (nodeId) => {
       const node = get().nodes.find((n) => n.id === nodeId);
-      if (!node || !node.data.prompt.trim()) return;
-      get().updateNodeData(nodeId, { status: "running", errorMessage: undefined });
-      try {
-        const result = await runInference({
-          nodeId,
-          kind: node.data.kind,
-          prompt: node.data.prompt,
-          model: node.data.model,
-          aspect: node.data.aspect,
-          duration: node.data.duration,
-        });
-        get().updateNodeData(nodeId, {
-          status: result.status,
-          assetUrl: result.assetUrl ?? node.data.assetUrl,
-          text: result.text ?? node.data.text,
-          errorMessage: result.errorMessage,
-        });
-      } catch {
-        get().updateNodeData(nodeId, {
-          status: "error",
-          errorMessage: "演示推理中断，请重试",
-        });
-      }
+      if (!node) return;
+      const msg = failClosedMessage(node.data.label || KIND_LABEL[node.data.kind] || "出图");
+      get().updateNodeData(nodeId, { status: "error", errorMessage: msg });
+      get().showToast(msg, { durationMs: 5600 });
     },
 
-    /** 第4刀：文字资产卡内出图，结果写本卡字段，严禁旁挂 image 节点 */
+    /** 第4刀：文字资产卡内出图；角色卡走三视主路径。 */
     generateStickyImage: async (nodeId) => {
       const node = get().nodes.find((n) => n.id === nodeId);
       if (!node || !isTextAssetCardNodeData(node.data)) return;
-      if (node.data.imageStatus === "running") return;
+      const lock = makeupLockedReason(get().makeupLocked, get().nodes);
+      if (lock) {
+        get().showToast(lock, { durationMs: 4200 });
+        return;
+      }
+      imageRunAbortById.get(nodeId)?.abort();
 
       const title = (node.data.label || "").trim();
       const body = (node.data.text || node.data.prompt || "").trim();
       const prompt = [title, body].filter(Boolean).join("\n") || "便签出图";
+      const asCharacter = isCharacterAssetCard(node);
+      const runAc = new AbortController();
+      const epoch = get().runEpoch;
+      const token = createFilmRunToken(get().projectId ?? "", nodeId);
+      const mine = () =>
+        stillMine(token, {
+          projectId: get().projectId,
+          runId: token.runId,
+          aborted: runAc.signal.aborted || get().runEpoch !== epoch,
+        });
+      imageRunAbortById.get(nodeId)?.abort();
+      imageRunAbortById.set(nodeId, runAc);
 
       get().updateNodeData(nodeId, {
         imageStatus: "running",
         imageError: undefined,
+        imageRunId: token.runId,
       });
 
-      try {
-        const result = await generateImage({ prompt, count: 1 });
-        const output = result.outputs[0];
-        if (!output) {
-          throw new Error("后端没有返回图片");
-        }
+      const applyOutput = (
+        output: { url?: string; s3Key?: string; assetId?: string },
+        view?: FilmThreeViewId,
+      ) => {
         const assetUrl =
           toBrowserMediaUrl(output.url, output.s3Key) ?? output.url ?? undefined;
-        if (!assetUrl && !output.s3Key) {
+        if (!assetUrl && !output.s3Key && !output.assetId) {
           throw new Error("后端返回的媒体缺少地址");
         }
-        // 再读一次，避免并发写覆盖其它字段
         const still = get().nodes.find((n) => n.id === nodeId);
-        if (!still) return;
+        if (!still || !mine()) return;
+        if (view) {
+          const views = { ...(still.data.threeViews ?? {}) };
+          views[view] = {
+            url: assetUrl || output.url,
+            s3Key: output.s3Key?.trim() || undefined,
+            assetId: output.assetId,
+            status: "success",
+          };
+          get().updateNodeData(nodeId, {
+            threeViews: views,
+            assetUrl: view === "front" ? assetUrl || still.data.assetUrl : still.data.assetUrl,
+            assetId: output.assetId ?? still.data.assetId,
+            s3Key: output.s3Key?.trim() || still.data.s3Key,
+          });
+          return;
+        }
         get().updateNodeData(nodeId, {
           imageStatus: "success",
           imageError: undefined,
+          imageRunId: undefined,
           assetUrl: assetUrl || still.data.assetUrl,
           assetId: output.assetId ?? still.data.assetId,
           s3Key: output.s3Key?.trim() || still.data.s3Key,
         });
+      };
+
+      try {
+        if (asCharacter) {
+          const views = { ...(node.data.threeViews ?? {}) };
+          for (const view of FILM_THREE_VIEWS) {
+            views[view] = { ...views[view], status: "running", error: undefined };
+          }
+          get().updateNodeData(nodeId, { threeViews: views });
+          for (const view of FILM_THREE_VIEWS) {
+            if (!mine()) return;
+            const result = await generateImage({
+              prompt: `${prompt}\n${FILM_THREE_VIEW_LABELS[view]}面三视图，白底，统一比例与灯光`,
+              count: 1,
+            });
+            if (!mine()) return;
+            const output = result.outputs[0];
+            if (!output) throw new Error("后端没有返回图片");
+            applyOutput(output, view);
+          }
+          if (!mine()) return;
+          get().updateNodeData(nodeId, {
+            imageStatus: "success",
+            imageError: undefined,
+            imageRunId: undefined,
+          });
+          get().showToast("角色三视已出", { durationMs: 3000 });
+          return;
+        }
+
+        const result = await generateImage({ prompt, count: 1 });
+        if (!mine()) return;
+        const output = result.outputs[0];
+        if (!output) throw new Error("后端没有返回图片");
+        applyOutput(output);
       } catch (caught) {
+        if (!mine() || runAc.signal.aborted || isAbortError(caught)) {
+          if (mine()) {
+            get().updateNodeData(nodeId, {
+              imageStatus: "idle",
+              imageError: undefined,
+              imageRunId: undefined,
+            });
+          }
+          return;
+        }
         const msg = studioErrorMessage(caught) || "出图失败，可重试";
         get().updateNodeData(nodeId, {
           imageStatus: "error",
           imageError: msg,
+          imageRunId: undefined,
         });
         get().showToast(msg, { durationMs: 5600 });
+      } finally {
+        if (imageRunAbortById.get(nodeId) === runAc) {
+          imageRunAbortById.delete(nodeId);
+        }
       }
     },
 
-    generateShotsFromScript: async (scriptId) => {
-      const script = get().nodes.find((n) => n.id === scriptId);
-      const rows = script?.data.scriptRows?.filter((r) => r.selected) ?? [];
-      if (!script || rows.length === 0) return;
-      pushHistory();
-
-      for (const [index, row] of rows.entries()) {
-        const existing = get().nodes.find(
-          (n) => n.data.sourceRowId === row.id && n.data.kind === "image"
-        );
-        const id =
-          existing?.id ??
-          get().addNode("image", {
-            position: {
-              x: script.position.x + 360,
-              y: script.position.y + index * 210,
-            },
-            data: {
-              label: `分镜 ${row.shotId}`,
-              prompt: row.visualDesc,
-              shotId: row.shotId,
-              sourceScriptId: scriptId,
-              sourceRowId: row.id,
-            },
-            select: false,
-          });
-        if (!get().edges.some((e) => e.source === scriptId && e.target === id)) {
-          set({
-            edges: addEdge(connect(scriptId, id), get().edges),
-          });
-        }
-        get().updateNodeData(id, { prompt: row.visualDesc, status: "running" });
-        await get().generateNode(id);
-        const image = get().nodes.find((n) => n.id === id);
-        get().updateScriptRow(scriptId, row.id, {
-          imageAssetUrl: image?.data.assetUrl,
-        });
-      }
+    generateShotsFromScript: async () => {
+      get().showToast(failClosedMessage("分镜出图"), { durationMs: 5600 });
     },
 
-    batchGenerateVideos: async (scriptId) => {
-      const script = get().nodes.find((n) => n.id === scriptId);
-      const rows = script?.data.scriptRows?.filter((r) => r.selected) ?? [];
-      if (!script || rows.length === 0) return;
-      pushHistory();
-
-      const failIndex = rows.length > 1 ? 1 : 0;
-      for (const [index, row] of rows.entries()) {
-        get().updateScriptRow(scriptId, row.id, {
-          rowStatus: "running",
-          errorMessage: undefined,
-        });
-        const result = await runRowJob(index === failIndex);
-        if (result.status === "error") {
-          get().updateScriptRow(scriptId, row.id, {
-            rowStatus: "error",
-            errorMessage: result.errorMessage,
-          });
-          continue;
-        }
-
-        const existing = get().nodes.find(
-          (n) => n.data.sourceRowId === row.id && n.data.kind === "video"
-        );
-        const id =
-          existing?.id ??
-          get().addNode("video", {
-            position: {
-              x: script.position.x + 720,
-              y: script.position.y + index * 210,
-            },
-            data: {
-              label: `成片 ${row.shotId}`,
-              prompt: row.visualDesc,
-              shotId: row.shotId,
-              sourceScriptId: scriptId,
-              sourceRowId: row.id,
-              duration: row.duration,
-              assetUrl: result.assetUrl,
-              status: "success",
-            },
-            select: false,
-          });
-        get().updateNodeData(id, {
-          assetUrl: result.assetUrl,
-          status: "success",
-          prompt: row.visualDesc,
-        });
-        if (!get().edges.some((e) => e.source === scriptId && e.target === id)) {
-          set({
-            edges: addEdge(connect(scriptId, id), get().edges),
-          });
-        }
-        get().updateScriptRow(scriptId, row.id, {
-          rowStatus: "success",
-          videoAssetUrl: result.assetUrl,
-        });
-      }
+    batchGenerateVideos: async () => {
+      get().showToast(failClosedMessage("成片"), { durationMs: 5600 });
     },
 
     resetScriptRow: (scriptId, rowId) => {

@@ -80,7 +80,7 @@ function AppShell() {
       <div className="app-main">
         <div>
           <UpdateBar />
-          <header className="topbar">
+          <header className={workspace === "film" ? "topbar topbar-film" : "topbar"}>
             <div>
               <h2>{meta?.label}</h2>
               <p>{meta?.hint}</p>

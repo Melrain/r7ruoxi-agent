@@ -200,12 +200,17 @@ export function assetKindOf(node: AppNode | undefined): AssetKind | null {
   return isAssetKind(node.data.kind) ? node.data.kind : null;
 }
 
-/** 本刀可注入装配的智能体（analyze 走 Nest skillId）。 */
-export const SKILL_ASSEMBLABLE_AGENTS = new Set<string>(["parse"]);
+/** 可注入装配：解析 / 写剧本 / 写分镜（analyze + write-* 走 Nest skillId）。 */
+export const SKILL_ASSEMBLABLE_AGENTS = new Set<string>([
+  "parse",
+  "script",
+  "storyboard",
+]);
 
 export const SKILL_AGENT_LABEL: Record<string, string> = {
   parse: "视频解析",
   script: "生成剧本",
+  storyboard: "拆分镜",
   image: "出图",
 };
 

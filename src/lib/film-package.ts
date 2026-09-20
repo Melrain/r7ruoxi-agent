@@ -140,6 +140,8 @@ export const FILM_NEXT_ACTIONS = [
   "run_breakdown",
   "review_breakdown",
   "write_script",
+  "write_storyboard",
+  "run_next",
 ] as const
 
 export type FilmNextActionId = (typeof FILM_NEXT_ACTIONS)[number]
@@ -154,7 +156,9 @@ export const FILM_NEXT_ACTION_LABELS: Record<FilmNextActionId, string> = {
   grok_login: "请先 grok login",
   run_breakdown: "拆解参考片",
   review_breakdown: "看看拆解对不对",
-  write_script: "剧本（稍后）",
+  write_script: "写剧本",
+  write_storyboard: "写分镜",
+  run_next: "跑下一步",
 }
 
 export function isFilmNextActionId(value: unknown): value is FilmNextActionId {
@@ -554,6 +558,9 @@ export function inferFilmNextActionId(project?: {
     return "ingest_reference"
   }
   if (isFilmNextActionId(project?.nextAction?.id)) return project.nextAction.id
+  if (pkg.script?.body?.trim() && (project?.phase === "shots" || project?.phase === "assets")) {
+    return "write_storyboard"
+  }
   if (project?.phase === "script" || breakdownStage?.status === "approved") {
     return "write_script"
   }

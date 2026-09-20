@@ -41,6 +41,19 @@ function dropHeavyMedia(doc: ProjectDoc, dropHttpsCache = false): ProjectDoc {
       }
       if (isDurableAssetUrl(url)) return node;
       return { ...node, data: { ...node.data, assetUrl: undefined } };
+    }).map((node) => {
+      const views = node.data.threeViews
+      if (!views) return node
+      const next = { ...views }
+      for (const key of ["front", "side", "back"] as const) {
+        const slot = next[key]
+        const url = slot?.url
+        if (!url) continue
+        if (isEphemeralAssetUrl(url) || dropHttpsCache || !isDurableAssetUrl(url)) {
+          next[key] = { ...slot, url: undefined }
+        }
+      }
+      return { ...node, data: { ...node.data, threeViews: next } }
     }),
   };
 }

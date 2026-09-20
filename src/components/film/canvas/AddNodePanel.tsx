@@ -43,6 +43,7 @@ const ICONS: Record<string, typeof FileText> = {
   "agent-video": Clapperboard,
   upload: Upload,
   history: History,
+  remix: Clapperboard,
 };
 
 type Branch = "asset" | "agent" | "skill";

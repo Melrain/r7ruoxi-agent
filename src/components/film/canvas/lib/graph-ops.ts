@@ -123,7 +123,8 @@ export const ADD_MENU_ITEMS: AddMenuItem[] = [
   { id: "agent-image", label: "出图", agentId: "image", section: "agent" },
   { id: "agent-video", label: "出视频", agentId: "video", section: "agent" },
   { id: "upload", label: "上传", stub: true, section: "resource" },
-  { id: "history", label: "从生成历史选择", stub: true, section: "resource" },
+  { id: "history", label: "从生成历史选择", section: "resource" },
+  { id: "remix", label: "Remix 影片素材", section: "resource" },
 ];
 
 export const ADD_NODE_GROUPS: {

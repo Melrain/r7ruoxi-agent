@@ -21,6 +21,7 @@ const AGENT_FILTERS: { id: string; label: string }[] = [
   { id: "all", label: "全部" },
   { id: "parse", label: "视频解析" },
   { id: "script", label: "生成剧本" },
+  { id: "storyboard", label: "拆分镜" },
   { id: "image", label: "出图" },
 ];
 

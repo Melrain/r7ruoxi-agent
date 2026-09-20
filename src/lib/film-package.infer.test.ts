@@ -57,3 +57,14 @@ test("ready reference honors run_breakdown nextAction", () => {
 test("missing reference stays on ingest", () => {
   assert.equal(inferFilmNextActionId({ package: pkg() }), "ingest_reference")
 })
+
+test("script body plus shots phase infers write_storyboard", () => {
+  const id = inferFilmNextActionId({
+    phase: "shots",
+    package: pkg({
+      references: [{ id: "r1", source: "upload", status: "ready" }],
+      script: { id: "s1", title: "剧本", body: "正文" },
+    }),
+  })
+  assert.equal(id, "write_storyboard")
+})
